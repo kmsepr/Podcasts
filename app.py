@@ -49,14 +49,7 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
 .tiny{font-size:11px;color:#666} audio{width:100%; margin-top:5px}
 .help{background:#f2f2f2;padding:5px;font-size:12px;color:#444;margin-bottom:6px}
 </style></head><body><h3>🎧 Podcast</h3>
-<div class="help">
-📱 Keypad Help:<br>
-1 = Favorites<br>
-2 = Previous Episode<br>
-4 = ⏪ Seek 15s / long press 60s<br>
-6 = ⏩ Seek 30s / long press 60s<br>
-8 = Next Episode
-</div>
+
 <input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
 <button onclick="showFavs()">⭐ My Favorites</button>
 <div id="results"></div>
