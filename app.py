@@ -390,9 +390,6 @@ function seek(seconds) {
 </script></body></html>
 '''
 
-@app.route('/')
-def homepage():
-    return render_template_string(HTML_TEMPLATE)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
