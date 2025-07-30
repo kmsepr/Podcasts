@@ -10,7 +10,7 @@ app = Flask(__name__)
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
 
-DAILY_REFRESH_TOKEN = "supersecret123"
+
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -80,8 +80,6 @@ def episodes_from_rss():
 
 @app.route('/api/favorites')
 def get_favorites():
-    if request.args.get('token') != DAILY_REFRESH_TOKEN and not request.remote_addr.startswith("127."):
-        return jsonify({'error': 'Unauthorized'}), 403
 
     offset = int(request.args.get('offset', 0))
     limit = 5
@@ -222,12 +220,11 @@ def mark_played(pid):
 
 # Background Updater
 def refresh_favorites():
-    print("[Daily Refresh] Triggering favorite update...")
+    print("[One-time Refresh] Triggering favorite update...")
     try:
-        requests.get(f'http://localhost:3000/api/favorites?token={DAILY_REFRESH_TOKEN}', timeout=10)
+        requests.get('http://localhost:3000/api/favorites', timeout=10)
     except Exception as e:
-        print("[Daily Refresh] Error:", e)
-    threading.Timer(86400, refresh_favorites).start()
+        print("[Refresh Error]:", e)
 
 # First trigger
 threading.Timer(5, refresh_favorites).start()
