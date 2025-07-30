@@ -252,9 +252,9 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
     <p id="epDesc" style="margin-top:6px"></p>
     <a id="downloadBtn" href="#" download style="display:inline-block;margin:5px 0">📥 Download MP3</a><br>
     <button onclick="prevEp()">⏮️</button>
-    <button onclick="seek(-15)">⏪ 15s</button>
+    
     <button onclick="togglePlay()">⏯️</button>
-    <button onclick="seek(30)">⏩ 30s</button>
+    
     <button onclick="nextEp()">⏭️</button>
   </div>
 </div>
