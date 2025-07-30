@@ -235,8 +235,6 @@ def refresh_favorites():
 # First trigger
 threading.Timer(5, refresh_favorites).start()
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000)
 
 ### HTML TEMPLATE ###
 HTML_TEMPLATE = '''
@@ -391,3 +389,10 @@ function seek(seconds) {
 }
 </script></body></html>
 '''
+
+@app.route('/')
+def homepage():
+    return render_template_string(HTML_TEMPLATE)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=3000)
