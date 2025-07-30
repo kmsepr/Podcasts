@@ -44,9 +44,6 @@ def init_db():
 
 init_db()
 
-@app.route('/')
-def homepage():
-    return render_template_string(HTML_TEMPLATE)
 
 @app.route('/api/search')
 def search_podcasts():
@@ -389,6 +386,9 @@ function seek(seconds) {
 }
 </script></body></html>
 '''
+@app.route('/')
+def homepage():
+    return render_template_string(HTML_TEMPLATE)
 
 
 if __name__ == '__main__':
