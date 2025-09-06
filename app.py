@@ -60,7 +60,6 @@ def episodes_from_rss():
     rss_url = data.get('rss_url')
     if not rss_url:
         return jsonify([])
-
     feed = feedparser.parse(rss_url)
     results = []
     for item in feed.entries[:10]:
@@ -177,7 +176,7 @@ def get_episodes(pid):
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
-# ---------------------- YouTube API using cookies ----------------------
+# ---------------------- YouTube API ----------------------
 YTDLP_COOKIES = '/mnt/data/cookies.txt'
 YTDLP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
 
@@ -198,30 +197,44 @@ def fetch_youtube_json(url, retries=3):
             if i < retries - 1:
                 time.sleep(2)
             else:
-                raise Exception(f"yt-dlp failed: {e.stderr}")
+                return {"error": e.stderr}
 
 @app.route('/yt')
 def yt_ui():
-    # Example channels
     channels = [
         "https://www.youtube.com/@babu_ramachandran/videos",
         "https://www.youtube.com/@dhruvrathee/videos"
     ]
     videos = []
     for ch in channels:
-        try:
-            data = fetch_youtube_json(ch)
-            if 'entries' in data:
-                for v in data['entries'][:1]:  # latest video
-                    videos.append({
-                        'title': v.get('title'),
-                        'url': v.get('webpage_url')
-                    })
-        except Exception as e:
+        data = fetch_youtube_json(ch)
+        if 'entries' in data:
+            for v in data['entries'][:1]:
+                videos.append({
+                    'title': v.get('title'),
+                    'url': v.get('webpage_url')
+                })
+        else:
             videos.append({'title': f"Error fetching {ch}", 'url': ''})
+
     html = "<h3>YouTube Channels</h3>"
     for v in videos:
         html += f"<div class='card'><b>{v['title']}</b><br><a href='{v['url']}' target='_blank'>▶ Watch</a></div>"
+    return html
+
+# ---------------------- Podcast Page ----------------------
+@app.route('/podcast')
+def podcast_ui():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT title, cover_url, podcast_id FROM podcasts ORDER BY last_played DESC LIMIT 10')
+    rows = c.fetchall()
+    conn.close()
+    html = "<h3>🎙️ Podcasts</h3>"
+    for title, cover, pid in rows:
+        html += f"<div class='card'><b>{title}</b><br>"
+        if cover: html += f"<img src='{cover}' width='100'><br>"
+        html += f"<a href='/api/podcast/{pid}/episodes'>View Episodes</a></div>"
     return html
 
 # ---------------------- Homepage ----------------------
@@ -253,9 +266,12 @@ const B = location.origin;
 function e(id){return document.getElementById(id);}
 document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
 async function search(){ let q=e('q').value; let r=await fetch(`/api/search?q=${encodeURIComponent(q)}`); let d=await r.json(); let o=e('results'); o.innerHTML=''; d.forEach(p=>{if(!p.feedUrl)return; let div=document.createElement('div'); div.className='card'; div.innerHTML=`<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br><button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`; o.appendChild(div); }); }
-async function previewFeed(url){ e('results').innerHTML='⏳ Fetching latest episode...'; let r=await fetch('/api/episodes_from_rss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rss_url:url})}); let d=await r.json(); if(d.length) showPlayer(d,true); else e('results').innerHTML='❌ No episodes found.'; }
-let favOffset=0;
-async function showFavs(){ favOffset=0; loadFavPage
+async function previewFeed(url){ e('results').innerHTML='⏳ Fetching latest episode...'; let r=await fetch('/api/episodes_from_rss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rss_url:url})}); let d=await r.json(); if(d.length) e('results').innerHTML='✅ Episodes fetched.'; else e('results').innerHTML='❌ No episodes found.'; }
+async function showFavs(){ let r=await fetch('/api/favorites'); let d=await r.json(); let o=e('results'); o.innerHTML=''; d.forEach(p=>{let div=document.createElement('div'); div.className='card'; div.innerHTML=`<b>${p['title']}</b><br><span class='tiny'>${p['author']}</span><br><button onclick="previewFeed('${p['rss_url']}')">📻 Episodes</button>`; o.appendChild(div); }); }
+</script>
+</body></html>
+'''
+
 # =============================
 # MAIN
 # =============================
