@@ -1,177 +1,139 @@
 import os
-import time
 import subprocess
 import logging
 import threading
-from flask import Flask, Response
+import time
 from pathlib import Path
-from datetime import datetime
-import json
+from flask import Flask, Response, request
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# ------------------------
+# -----------------------
 # Settings
-# ------------------------
-REFRESH_INTERVAL = 1200
-EXPIRE_AGE = 7200
+# -----------------------
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 TMP_DIR = Path("/tmp/ytmp3")
 TMP_DIR.mkdir(exist_ok=True)
 
+# Channels
 CHANNELS = {
     "vallathorukatha": "https://www.youtube.com/@babu_ramachandran/videos",
     "furqan": "https://youtube.com/@alfurqan4991/videos",
-    "skicr": "https://youtube.com/@skicrtv/videos"
+    "skicr": "https://youtube.com/@skicrtv/videos",
 }
 
-VIDEO_CACHE = {name: {"url": None, "title": "", "channel": "", "upload_date": ""} for name in CHANNELS}
+# Cache for latest video URL and mp3
+VIDEO_CACHE = {name: {"url": None, "mp3": None, "last_checked": 0} for name in CHANNELS}
 
-# ------------------------
-# Fetch latest video info
-# ------------------------
-def fetch_latest_video_info(channel_url):
+# -----------------------
+# Get latest video URL
+# -----------------------
+def get_latest_video(channel_url):
     try:
-        result = subprocess.run([
+        cmd = [
             "yt-dlp",
-            "--dump-single-json",
-            "--playlist-end", "1",
-            "--cookies", "/mnt/data/cookies.txt",
+            "--get-id",
+            "--playlist-items", "1",
             "--user-agent", FIXED_USER_AGENT,
             channel_url
-        ], capture_output=True, text=True, check=True)
-
-        data = json.loads(result.stdout)
-        video = data["entries"][0]
-        video_id = video["id"]
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
-        thumbnail = video.get("thumbnail", "")
-        upload_date = video.get("upload_date", "")
-        title = video.get("title", "")
-        channel_name = video.get("channel", "")
-        return video_url, thumbnail, video_id, upload_date, title, channel_name
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        video_id = result.stdout.strip()
+        if video_id:
+            return f"https://www.youtube.com/watch?v={video_id}"
+        return None
     except Exception as e:
-        logging.error(f"Failed to fetch latest video from {channel_url}: {e}")
-        return None, None, None, None, None, None
+        logging.error(f"Failed to get latest video from {channel_url}: {e}")
+        return None
 
-# ------------------------
-# Download MP3 with thumbnail & metadata
-# ------------------------
-def download_mp3(channel_name, video_url, thumbnail_url="", title="", artist="", upload_date=""):
+# -----------------------
+# Download and convert to mp3
+# -----------------------
+def download_mp3(channel_name, video_url):
     mp3_path = TMP_DIR / f"{channel_name}.mp3"
     if mp3_path.exists():
         return mp3_path
 
-    album = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y") if upload_date else "Unknown"
-    base_path = TMP_DIR / channel_name
-    audio_path = base_path.with_suffix(".webm")
-    thumb_path = base_path.with_suffix(".jpg")
-
     try:
-        # Download audio + thumbnail
         subprocess.run([
             "yt-dlp",
             "-f", "bestaudio",
-            "--output", str(base_path) + ".%(ext)s",
-            "--write-thumbnail",
-            "--convert-thumbnails", "jpg",
-            "--cookies", "/mnt/data/cookies.txt",
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--audio-quality", "0",
+            "--output", str(mp3_path),
             "--user-agent", FIXED_USER_AGENT,
             video_url
         ], check=True)
-
-        if not audio_path.exists():
-            logging.error(f"Audio download failed for {channel_name}")
-            return None
-
-        # Convert to MP3 with metadata + thumbnail
-        ffmpeg_cmd = [
-            "ffmpeg", "-y",
-            "-i", str(audio_path),
-        ]
-
-        if thumb_path.exists():
-            ffmpeg_cmd += ["-i", str(thumb_path), "-map", "0:a", "-map", "1:v", "-disposition:v", "attached_pic"]
-
-        ffmpeg_cmd += [
-            "-vn", "-ac", "1", "-b:a", "64k", "-ar", "22050",
-            "-metadata", f"title={title}",
-            "-metadata", f"album={album}",
-            "-metadata", f"artist={artist}",
-            str(mp3_path)
-        ]
-
-        subprocess.run(ffmpeg_cmd, check=True)
-
-        audio_path.unlink(missing_ok=True)
-        thumb_path.unlink(missing_ok=True)
-
         return mp3_path if mp3_path.exists() else None
     except Exception as e:
-        logging.error(f"Error converting {channel_name}: {e}")
+        logging.error(f"Failed to download mp3 for {channel_name}: {e}")
         return None
 
-# ------------------------
-# Update cache loop
-# ------------------------
-def update_cache_loop():
+# -----------------------
+# Background updater
+# -----------------------
+def update_loop():
     while True:
         for name, url in CHANNELS.items():
-            video_url, thumbnail, video_id, upload_date, title, channel_name = fetch_latest_video_info(url)
-            if video_url:
-                VIDEO_CACHE[name].update({
-                    "url": video_url,
-                    "title": title,
-                    "channel": channel_name,
-                    "upload_date": upload_date,
-                    "thumbnail": thumbnail
-                })
-                download_mp3(name, video_url, thumbnail, title, channel_name, upload_date)
-            time.sleep(2)
-        time.sleep(REFRESH_INTERVAL)
+            last_checked = VIDEO_CACHE[name]["last_checked"]
+            if time.time() - last_checked > 600:  # check every 10 min
+                video_url = get_latest_video(url)
+                if video_url and video_url != VIDEO_CACHE[name]["url"]:
+                    VIDEO_CACHE[name]["url"] = video_url
+                    VIDEO_CACHE[name]["mp3"] = download_mp3(name, video_url)
+                VIDEO_CACHE[name]["last_checked"] = time.time()
+        time.sleep(60)
 
-# ------------------------
-# Cleanup old files
-# ------------------------
-def cleanup_files():
-    while True:
-        now = time.time()
-        for f in TMP_DIR.glob("*.mp3"):
-            if now - f.stat().st_mtime > EXPIRE_AGE:
-                logging.info(f"Deleting old file {f}")
-                f.unlink(missing_ok=True)
-        time.sleep(EXPIRE_AGE)
+threading.Thread(target=update_loop, daemon=True).start()
 
-# ------------------------
+# -----------------------
 # Flask routes
-# ------------------------
+# -----------------------
 @app.route("/<channel>.mp3")
 def stream_mp3(channel):
     if channel not in CHANNELS:
         return "Channel not found", 404
-    mp3_path = TMP_DIR / f"{channel}.mp3"
-    if not mp3_path.exists():
-        data = VIDEO_CACHE[channel]
-        mp3_path = download_mp3(channel, data.get("url"), data.get("thumbnail"), data.get("title"), data.get("channel"), data.get("upload_date"))
-    if not mp3_path:
-        return "Video not ready", 503
-    return Response(open(mp3_path, "rb"), mimetype="audio/mpeg")
+
+    mp3_path = VIDEO_CACHE[channel].get("mp3")
+    if not mp3_path or not mp3_path.exists():
+        return "MP3 not available yet", 503
+
+    file_size = os.path.getsize(mp3_path)
+    range_header = request.headers.get('Range', None)
+    headers = {'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'bytes'}
+
+    if range_header:
+        try:
+            byte1, byte2 = range_header.replace("bytes=", "").split("-")
+            byte1 = int(byte1)
+            byte2 = int(byte2) if byte2 else file_size - 1
+            length = byte2 - byte1 + 1
+            with open(mp3_path, 'rb') as f:
+                f.seek(byte1)
+                chunk = f.read(length)
+            headers.update({'Content-Range': f'bytes {byte1}-{byte2}/{file_size}', 'Content-Length': str(length)})
+            return Response(chunk, status=206, headers=headers)
+        except Exception as e:
+            return f"Invalid Range header: {e}", 400
+
+    with open(mp3_path, 'rb') as f:
+        data = f.read()
+    headers['Content-Length'] = str(file_size)
+    return Response(data, headers=headers)
 
 @app.route("/")
 def index():
-    html = "<h3>Available MP3s:</h3><ul>"
-    for c in CHANNELS:
-        if (TMP_DIR / f"{c}.mp3").exists():
-            html += f"<li><a href='/{c}.mp3'>{c}</a></li>"
+    html = "<h3>Latest YouTube Videos MP3</h3><ul>"
+    for name in CHANNELS:
+        if VIDEO_CACHE[name]["mp3"]:
+            html += f"<li><a href='/{name}.mp3'>{name}</a></li>"
     html += "</ul>"
     return html
 
-# ------------------------
-# Start threads
-# ------------------------
-threading.Thread(target=update_cache_loop, daemon=True).start()
-threading.Thread(target=cleanup_files, daemon=True).start()
-
+# -----------------------
+# Run Flask
+# -----------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
