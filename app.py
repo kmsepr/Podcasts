@@ -223,6 +223,8 @@ def youtube_index():
 
 # -------------------- UI ROUTES --------------------
 
+# -------------------- UI ROUTES --------------------
+
 @app.route('/')
 def landing_page():
     return '''
@@ -256,6 +258,73 @@ def landing_page():
       </div>
     </body></html>
     '''
+
+@app.route('/podcast')
+def podcast_ui():
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Podcast Player</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+      <style>
+        body { padding: 1rem; }
+        .episode { margin-bottom: 1rem; }
+        .podcast-card { cursor: pointer; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2 class="mb-4">🎧 Podcast Player</h2>
+        <div id="podcast-list" class="row"></div>
+        <div id="episode-list" class="mt-4"></div>
+      </div>
+
+      <script>
+        async function loadPodcasts() {
+          let res = await fetch('/api/favorites');
+          let podcasts = await res.json();
+          let container = document.getElementById('podcast-list');
+          container.innerHTML = '';
+          podcasts.forEach(p => {
+            let col = document.createElement('div');
+            col.className = 'col-md-4';
+            col.innerHTML = `
+              <div class="card podcast-card" onclick="loadEpisodes('${p.podcast_id}')">
+                <img src="${p.cover_url}" class="card-img-top" alt="${p.title}">
+                <div class="card-body">
+                  <h5 class="card-title">${p.title}</h5>
+                  <p class="card-text">${p.author}</p>
+                </div>
+              </div>`;
+            container.appendChild(col);
+          });
+        }
+        async function loadEpisodes(pid) {
+          let res = await fetch('/api/podcast/' + encodeURIComponent(pid) + '/episodes');
+          let eps = await res.json();
+          let container = document.getElementById('episode-list');
+          container.innerHTML = '';
+          eps.forEach(ep => {
+            let div = document.createElement('div');
+            div.className = 'episode card';
+            div.innerHTML = `
+              <div class="card-body">
+                <h5 class="card-title">${ep.title}</h5>
+                <p class="card-text">${ep.description}</p>
+                <audio controls src="${ep.audio_url}" class="w-100"></audio>
+              </div>`;
+            container.appendChild(div);
+          });
+          await fetch('/api/mark_played/' + encodeURIComponent(pid), {method: 'POST'});
+        }
+        loadPodcasts();
+      </script>
+    </body>
+    </html>
+    """)
 
 @app.route('/podcast')
 def podcast_ui():
