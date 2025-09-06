@@ -298,11 +298,47 @@ def podcast_home():
 # ----------------------------
 @app.route("/")
 def home():
-    return """<h2>Welcome</h2>
-    <ul>
-      <li><a href="/yt">🎬 YouTube MP3</a></li>
-      <li><a href="/podcast">🎧 Podcast</a></li>
-    </ul>"""
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Media Hub</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="bg-light">
+        <div class="container py-5">
+            <h2 class="mb-4 text-center">📺 Media Hub</h2>
+            <div class="row justify-content-center">
+                
+                <div class="col-md-4">
+                    <div class="card shadow-sm mb-4">
+                        <img src="https://img.icons8.com/fluency/240/youtube-play.png" class="card-img-top p-4" alt="YouTube">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">YouTube MP3</h5>
+                            <p class="card-text">Stream and download latest videos as MP3 with cover art.</p>
+                            <a href="/yt" class="btn btn-danger">Go to YouTube</a>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-4">
+                    <div class="card shadow-sm mb-4">
+                        <img src="https://img.icons8.com/fluency/240/podcast.png" class="card-img-top p-4" alt="Podcast">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">Podcasts</h5>
+                            <p class="card-text">Browse and play your favorite podcasts from one place.</p>
+                            <a href="/podcast" class="btn btn-primary">Go to Podcasts</a>
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+    </body>
+    </html>
+    """
 
 # ----------------------------
 # THREADS
