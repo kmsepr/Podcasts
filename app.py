@@ -1,279 +1,346 @@
 import os
-import sqlite3
-import requests
-import feedparser
-import subprocess
-import json
 import time
-from flask import Flask, request, jsonify
+import json
+import subprocess
+import logging
+import threading
+from flask import Flask, Response, request
+from pathlib import Path
+from datetime import datetime
 
 app = Flask(__name__)
-DB_FILE = '/mnt/data/podcasts.db'
-os.makedirs('/mnt/data', exist_ok=True)
+logging.basicConfig(level=logging.INFO)
 
-# ---------------------- Database setup ----------------------
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS podcasts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            podcast_id TEXT UNIQUE,
-            title TEXT,
-            author TEXT,
-            cover_url TEXT,
-            rss_url TEXT,
-            last_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS episodes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            podcast_id TEXT,
-            episode_id TEXT UNIQUE,
-            title TEXT,
-            description TEXT,
-            audio_url TEXT,
-            pub_date TEXT,
-            duration TEXT,
-            FOREIGN KEY(podcast_id) REFERENCES podcasts(podcast_id)
-        )
-    ''')
-    conn.commit()
-    conn.close()
+# Interval settings
+REFRESH_INTERVAL = 1200       # 20 minutes
+RECHECK_INTERVAL = 3600       # 60 minutes
+EXPIRE_AGE = 7200             # 2 hours
 
-init_db()
+# Fixed user agent
+FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-# ---------------------- Podcast API ----------------------
-@app.route('/api/search')
-def search_podcasts():
-    query = request.args.get('q', '')
+CHANNELS = {
+
+"vallathorukatha": "https://www.youtube.com/@babu_ramachandran/videos",
+    "furqan": "https://youtube.com/@alfurqan4991/videos",
+    "skicr": "https://youtube.com/@skicrtv/videos",
+    "dhruvrathee": "https://youtube.com/@dhruvrathee/videos",
+    "safari": "https://youtube.com/@safaritvlive/videos",
+
+"qasimi": "https://www.youtube.com/@quranstudycentremukkam/videos",
+    "sharique": "https://youtube.com/@shariquesamsudheen/videos",
+
+
+    "vijayakumarblathur": "https://youtube.com/@vijayakumarblathur/videos",
+ "entridegree": "https://youtube.com/@entridegreelevelexams/videos",
+     "talent": "https://youtube.com/@talentacademyonline/videos",
+
+   "drali": "https://youtube.com/@draligomaa/videos",
+    "yaqeen": "https://youtube.com/@yaqeeninstituteofficial/videos",
+    "ccm": "https://youtube.com/@cambridgecentralmosque/videos",
+    "maheen": "https://youtube.com/@hitchhikingnomaad/videos",
+    "entri": "https://youtube.com/@entriapp/videos",
+    "zamzam": "https://youtube.com/@zamzamacademy/videos",
+    "jrstudio": "https://youtube.com/@jrstudiomalayalam/videos",
+    "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
+    "parvinder": "https://www.youtube.com/@pravindersheoran/videos",
+
+
+    "suprabhatam": "https://youtube.com/@suprabhaatham2023/videos",
+    "bayyinah": "https://youtube.com/@bayyinah/videos",
+
+    "sunnxt": "https://youtube.com/@sunnxtmalayalam/videos",
+    "movieworld": "https://youtube.com/@movieworldmalayalammovies/videos",
+    "comedy": "https://youtube.com/@malayalamcomedyscene5334/videos",
+    "studyiq": "https://youtube.com/@studyiqiasenglish/videos",
+    "sreekanth": "https://youtube.com/@sreekanthvettiyar/videos",
+    "jr": "https://youtube.com/@yesitsmejr/videos",
+    "habib": "https://youtube.com/@habibomarcom/videos",
+    "unacademy": "https://youtube.com/@unacademyiasenglish/videos",
+    "eftguru": "https://youtube.com/@eftguru-ql8dk/videos",
+    "anurag": "https://youtube.com/@anuragtalks1/videos",
+}
+
+VIDEO_CACHE = {
+    name: {"url": None, "last_checked": 0, "thumbnail": "", "upload_date": "", "title": "", "channel": ""}
+    for name in CHANNELS
+}
+LAST_VIDEO_ID = {name: None for name in CHANNELS}
+TMP_DIR = Path("/tmp/ytmp3")
+TMP_DIR.mkdir(exist_ok=True)
+
+def fetch_latest_video_url(name, channel_url):
     try:
-        res = requests.get(f'https://itunes.apple.com/search?media=podcast&term={query}')
-        return jsonify(res.json().get('results', []))
+        result = subprocess.run([
+            "yt-dlp",
+            "--dump-single-json",
+            "--playlist-end", "1",
+            "--cookies", "/mnt/data/cookies.txt",
+            "--user-agent", FIXED_USER_AGENT,
+            channel_url
+        ], capture_output=True, text=True, check=True)
+
+        data = json.loads(result.stdout)
+        video = data["entries"][0]
+        video_id = video["id"]
+        thumbnail_url = video.get("thumbnail", "")
+        upload_date = video.get("upload_date", "")
+        title = video.get("title", "")
+        channel = video.get("channel", "")
+        return f"https://www.youtube.com/watch?v={video_id}", thumbnail_url, video_id, upload_date, title, channel
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logging.error(f"Error fetching video from {channel_url}: {e}")
+        return None, None, None, None, None, None
 
-@app.route('/api/episodes_from_rss', methods=['POST'])
-def episodes_from_rss():
-    data = request.get_json()
-    rss_url = data.get('rss_url')
-    if not rss_url:
-        return jsonify([])
-    feed = feedparser.parse(rss_url)
-    results = []
-    for item in feed.entries[:10]:
-        audio = ''
-        for enc in item.get('enclosures', []):
-            if enc.get('href', '').startswith('http'):
-                audio = enc['href']
-                break
-        if not audio:
-            continue
-        results.append({
-            'title': item.get('title', ''),
-            'description': item.get('summary', '') or item.get('description', ''),
-            'pub_date': item.get('published', ''),
-            'audio_url': audio
-        })
-    return jsonify(results)
+def format_upload_month(upload_date):
+    try:
+        dt = datetime.strptime(upload_date, "%Y%m%d")
+        return dt.strftime("%B %Y")  # e.g., "April 2025"
+    except Exception:
+        return "Unknown"
 
-@app.route('/api/favorites')
-def get_favorites():
-    offset = int(request.args.get('offset', 0))
-    limit = 5
-    default_feeds = [
-        "https://muslimcentral.com/audio/hamza-yusuf/feed/",
-        "https://feeds.megaphone.fm/THGU4956605070",
-        "https://feeds.buzzsprout.com/2050847.rss",
-        "https://muslimcentral.com/audio/the-deen-show/feed/",
-        "https://feeds.buzzsprout.com/1194665.rss",
-        "https://www.spreaker.com/show/5085297/episodes/feed",
-    ]
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+def download_and_convert(channel, video_url):
+    final_path = TMP_DIR / f"{channel}.mp3"
+    if final_path.exists():
+        return final_path
+    if not video_url:
+        return None
 
-    for rss_url in default_feeds:
+    try:
+        base_path = TMP_DIR / channel
+        audio_path = base_path.with_suffix(".webm")
+        thumb_path = base_path.with_suffix(".jpg")
+
+        # Download best audio and thumbnail
+        subprocess.run([
+            "yt-dlp",
+            "-f", "18",
+            "--output", str(base_path) + ".%(ext)s",
+            "--write-thumbnail",
+            "--convert-thumbnails", "jpg",
+            "--cookies", "/mnt/data/cookies.txt",
+            "--user-agent", FIXED_USER_AGENT,
+            video_url
+        ], check=True)
+
+        if not audio_path.exists() or not thumb_path.exists():
+            logging.error(f"Missing audio or thumbnail for {channel}")
+            return None
+
+        info = VIDEO_CACHE[channel]
+        title = info.get("title", channel)
+        artist = info.get("channel", channel)
+        album = format_upload_month(info.get("upload_date", ""))
+
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", str(audio_path),
+            "-i", str(thumb_path),
+            "-map", "0:a",
+            "-map", "1:v",
+            "-c:a", "libmp3lame",
+            "-c:v", "mjpeg",
+            "-b:a", "64k",
+            "-ar", "22050",
+            "-ac", "1",
+            "-id3v2_version", "3",
+            "-metadata", f"title={title}",
+            "-metadata", f"album={album}",
+            "-metadata", f"artist={artist}",
+            "-disposition:v", "attached_pic",
+            str(final_path)
+        ], check=True)
+
+        audio_path.unlink(missing_ok=True)
+        thumb_path.unlink(missing_ok=True)
+
+        return final_path if final_path.exists() else None
+    except Exception as e:
+        logging.error(f"Error converting {channel}: {e}")
+        partial = final_path.with_suffix(".mp3.part")
+        if partial.exists():
+            partial.unlink()
+        return None
+
+def cleanup_old_files():
+    while True:
+        current_time = time.time()
+        for file in TMP_DIR.glob("*.mp3"):
+            if current_time - file.stat().st_mtime > EXPIRE_AGE:
+                try:
+                    logging.info(f"Cleaning up old file: {file}")
+                    file.unlink()
+                except Exception as e:
+                    logging.error(f"Error cleaning up file {file}: {e}")
+        time.sleep(EXPIRE_AGE)
+
+def update_video_cache_loop():
+    while True:
+        for name, url in CHANNELS.items():
+            video_url, thumbnail, video_id, upload_date, title, channel_name = fetch_latest_video_url(name, url)
+            if video_url and video_id:
+                if LAST_VIDEO_ID[name] != video_id:
+                    LAST_VIDEO_ID[name] = video_id
+                    VIDEO_CACHE[name].update({
+                        "url": video_url,
+                        "last_checked": time.time(),
+                        "thumbnail": thumbnail,
+                        "upload_date": upload_date,
+                        "title": title,
+                        "channel": channel_name,
+                    })
+                    download_and_convert(name, video_url)
+            time.sleep(3)
+        time.sleep(REFRESH_INTERVAL)
+
+def auto_download_mp3s():
+    while True:
+        for name, data in VIDEO_CACHE.items():
+            video_url = data.get("url")
+            if video_url:
+                mp3_path = TMP_DIR / f"{name}.mp3"
+                if not mp3_path.exists() or time.time() - mp3_path.stat().st_mtime > RECHECK_INTERVAL:
+                    logging.info(f"Pre-downloading {name}")
+                    download_and_convert(name, video_url)
+            time.sleep(3)
+        time.sleep(RECHECK_INTERVAL)
+
+@app.route("/<channel>.mp3")
+def stream_mp3(channel):
+    if channel not in CHANNELS:
+        return "Channel not found", 404
+
+    data = VIDEO_CACHE[channel]
+    video_url = data.get("url")
+    if not video_url:
+        video_url, thumbnail, video_id, upload_date, title, channel_name = fetch_latest_video_url(channel, CHANNELS[channel])
+        if not video_url:
+            return "Unable to fetch video", 500
+        if video_id and LAST_VIDEO_ID[channel] != video_id:
+            LAST_VIDEO_ID[channel] = video_id
+            VIDEO_CACHE[channel].update({
+                "url": video_url,
+                "last_checked": time.time(),
+                "thumbnail": thumbnail,
+                "upload_date": upload_date,
+                "title": title,
+                "channel": channel_name,
+            })
+
+    mp3_path = download_and_convert(channel, video_url)
+    if not mp3_path or not mp3_path.exists():
+        return "Error preparing stream", 500
+
+    file_size = os.path.getsize(mp3_path)
+    range_header = request.headers.get('Range', None)
+    headers = {
+        'Content-Type': 'audio/mpeg',
+        'Accept-Ranges': 'bytes',
+    }
+
+    if range_header:
         try:
-            feed = feedparser.parse(rss_url)
-            if not feed.entries:
-                continue
-            podcast_id = rss_url
-            title = feed.feed.get('title', 'Untitled')
-            author = feed.feed.get('author', 'Unknown')
-            image = (feed.feed.get('image', {}) or {}).get('href', '') or \
-                    feed.feed.get('itunes_image', {}).get('href', '')
-            c.execute('''
-                INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (podcast_id, title, author, image, rss_url))
-        except:
-            continue
+            range_value = range_header.strip().split("=")[1]
+            byte1, byte2 = range_value.split("-")
+            byte1 = int(byte1)
+            byte2 = int(byte2) if byte2 else file_size - 1
+        except Exception as e:
+            return f"Invalid Range header: {e}", 400
 
-    conn.commit()
-    c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
-              % ','.join('?' * len(default_feeds)),
-              (*default_feeds, limit, offset))
-    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
-    conn.close()
-    return jsonify(rows)
+        length = byte2 - byte1 + 1
+        with open(mp3_path, 'rb') as f:
+            f.seek(byte1)
+            chunk = f.read(length)
 
-@app.route('/api/mark_played/<path:pid>', methods=['POST'])
-def mark_played(pid):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('UPDATE podcasts SET last_played = CURRENT_TIMESTAMP WHERE podcast_id = ?', (pid,))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Marked as played'})
-
-@app.route('/api/podcast/<path:pid>/episodes')
-def get_episodes(pid):
-    offset = int(request.args.get('offset', 0))
-    limit = 9
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
-    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
-    if rows:
-        conn.close()
-        return jsonify(rows)
-
-    c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({'error': 'Podcast not found'}), 404
-
-    feed = feedparser.parse(row[0])
-    all_eps = []
-    for item in feed.entries:
-        eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
-        audio = ''
-        for enc in item.get('enclosures', []):
-            if enc.get('href', '').startswith('http'):
-                audio = enc['href']
-                break
-        if not audio:
-            continue
-        title = item.get('title', '')
-        desc = item.get('summary', '') or item.get('description', '')
-        pub_date = item.get('published', '')
-        duration = item.get('itunes_duration', '')
-        c.execute('''
-            INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (pid, eid, title, desc, audio, pub_date, duration))
-        all_eps.append({
-            'episode_id': eid,
-            'title': title,
-            'description': desc,
-            'audio_url': audio,
-            'pub_date': pub_date,
-            'duration': duration
+        headers.update({
+            'Content-Range': f'bytes {byte1}-{byte2}/{file_size}',
+            'Content-Length': str(length)
         })
-    conn.commit()
-    conn.close()
-    return jsonify(all_eps[offset:offset + limit])
+        return Response(chunk, status=206, headers=headers)
 
-# ---------------------- YouTube API ----------------------
-YTDLP_COOKIES = '/mnt/data/cookies.txt'
-YTDLP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    with open(mp3_path, 'rb') as f:
+        data = f.read()
+    headers['Content-Length'] = str(file_size)
+    return Response(data, headers=headers)
 
-def fetch_youtube_json(url, retries=3):
-    for i in range(retries):
-        try:
-            cmd = [
-                "yt-dlp",
-                "--dump-single-json",
-                "--playlist-end", "5",
-                "--cookies", YTDLP_COOKIES,
-                "--user-agent", YTDLP_USER_AGENT,
-                url
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout)
-        except subprocess.CalledProcessError as e:
-            if i < retries - 1:
-                time.sleep(2)
-            else:
-                return {"error": e.stderr}
+@app.route("/")
+def index():
+    html = """
+    <html>
+    <head>
+        <title>YouTube Mp3</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: sans-serif;
+                font-size: 14px;
+                background: #fff;
+                margin: 0;
+                padding: 10px;
+            }
+            h3 {
+                text-align: center;
+            }
+            .grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+                gap: 10px;
+            }
+            .card {
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                padding: 6px;
+                background: #f9f9f9;
+            }
+            .card img {
+                width: 100%;
+                height: auto;
+                border-radius: 4px;
+                margin-bottom: 4px;
+            }
+            .card a {
+                color: #000;
+                text-decoration: none;
+                font-weight: bold;
+            }
+            .card small {
+                color: #666;
+            }
+        </style>
+    </head>
+    <body>
+        <h3>YouTube Mp3</h3>
+        <div class="grid">
+    """
 
-@app.route('/yt')
-def yt_ui():
-    channels = [
-        "https://www.youtube.com/@babu_ramachandran/videos",
-        "https://www.youtube.com/@dhruvrathee/videos"
-    ]
-    videos = []
-    for ch in channels:
-        data = fetch_youtube_json(ch)
-        if 'entries' in data:
-            for v in data['entries'][:1]:
-                videos.append({
-                    'title': v.get('title'),
-                    'url': v.get('webpage_url')
-                })
-        else:
-            videos.append({'title': f"Error fetching {ch}", 'url': ''})
+    def get_upload_date(channel):
+        return VIDEO_CACHE[channel].get("upload_date", "Unknown")
 
-    html = "<h3>YouTube Channels</h3>"
-    for v in videos:
-        html += f"<div class='card'><b>{v['title']}</b><br><a href='{v['url']}' target='_blank'>▶ Watch</a></div>"
+    for channel in sorted(CHANNELS, key=lambda x: get_upload_date(x), reverse=True):
+        mp3_path = TMP_DIR / f"{channel}.mp3"
+        if not mp3_path.exists():
+            continue
+        thumbnail = (VIDEO_CACHE[channel].get("thumbnail", "") or "http://via.placeholder.com/120x80?text=YT").replace("https://", "http://")
+        upload_date = get_upload_date(channel)
+        html += f"""
+            <div class="card">
+                <img src="{thumbnail}" loading="lazy" alt="{channel}">
+                <div style="text-align:center;">
+                    <a href="/{channel}.mp3">{channel}</a><br>
+                    <small>{upload_date}</small>
+                </div>
+            </div>
+        """
+
+    html += """
+        </div>
+    </body>
+    </html>
+    """
     return html
+threading.Thread(target=update_video_cache_loop, daemon=True).start()
+threading.Thread(target=auto_download_mp3s, daemon=True).start()
+threading.Thread(target=cleanup_old_files, daemon=True).start()
 
-# ---------------------- Podcast Page ----------------------
-@app.route('/podcast')
-def podcast_ui():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT title, cover_url, podcast_id FROM podcasts ORDER BY last_played DESC LIMIT 10')
-    rows = c.fetchall()
-    conn.close()
-    html = "<h3>🎙️ Podcasts</h3>"
-    for title, cover, pid in rows:
-        html += f"<div class='card'><b>{title}</b><br>"
-        if cover: html += f"<img src='{cover}' width='100'><br>"
-        html += f"<a href='/api/podcast/{pid}/episodes'>View Episodes</a></div>"
-    return html
-
-# ---------------------- Homepage ----------------------
-@app.route('/')
-def homepage():
-    return '''
-<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title><style>
-body{font-family:sans-serif;font-size:14px;margin:4px}
-input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
-.tiny{font-size:11px;color:#666} audio{width:100%; margin-top:5px}
-</style></head><body><h3>🎧 Podcast</h3>
-<p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
-<input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
-<button onclick="showFavs()">⭐ My Favorites</button>
-<div id="results"></div>
-<div id="playerBox" style="display:none">
-  <div class="card">
-    <b id="epTitle"></b><br><span class="tiny" id="epDate"></span><br>
-    <audio id="player" controls></audio><br>
-    <p id="epDesc" style="margin-top:6px"></p>
-    <a id="downloadBtn" href="#" download style="display:inline-block;margin:5px 0">📥 Download MP3</a><br>
-    <button onclick="prevEp()">⏮️</button>
-    <button onclick="togglePlay()">⏯️</button>
-    <button onclick="nextEp()">⏭️</button>
-  </div>
-</div>
-<script>
-const B = location.origin;
-function e(id){return document.getElementById(id);}
-document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
-async function search(){ let q=e('q').value; let r=await fetch(`/api/search?q=${encodeURIComponent(q)}`); let d=await r.json(); let o=e('results'); o.innerHTML=''; d.forEach(p=>{if(!p.feedUrl)return; let div=document.createElement('div'); div.className='card'; div.innerHTML=`<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br><button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`; o.appendChild(div); }); }
-async function previewFeed(url){ e('results').innerHTML='⏳ Fetching latest episode...'; let r=await fetch('/api/episodes_from_rss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rss_url:url})}); let d=await r.json(); if(d.length) e('results').innerHTML='✅ Episodes fetched.'; else e('results').innerHTML='❌ No episodes found.'; }
-async function showFavs(){ let r=await fetch('/api/favorites'); let d=await r.json(); let o=e('results'); o.innerHTML=''; d.forEach(p=>{let div=document.createElement('div'); div.className='card'; div.innerHTML=`<b>${p['title']}</b><br><span class='tiny'>${p['author']}</span><br><button onclick="previewFeed('${p['rss_url']}')">📻 Episodes</button>`; o.appendChild(div); }); }
-</script>
-</body></html>
-'''
-
-# =============================
-# MAIN
-# =============================
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000)
