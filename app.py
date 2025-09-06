@@ -3,16 +3,17 @@ import sqlite3
 import requests
 import feedparser
 import subprocess
-import logging
-from flask import Flask, request, jsonify, render_template_string, send_file
+import threading
+import time
+from flask import Flask, request, jsonify, send_file, render_template_string
 
 app = Flask(__name__)
+
+# =============================
+# PODCAST DATABASE + FUNCTIONS
+# =============================
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
-
-logging.basicConfig(level=logging.INFO)
-
-# -------------------- PODCAST SECTION --------------------
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -61,6 +62,7 @@ def episodes_from_rss():
     rss_url = data.get('rss_url')
     if not rss_url:
         return jsonify([])
+
     feed = feedparser.parse(rss_url)
     results = []
     for item in feed.entries[:10]:
@@ -93,6 +95,7 @@ def get_favorites():
     ]
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+
     for rss_url in default_feeds:
         try:
             feed = feedparser.parse(rss_url)
@@ -109,6 +112,7 @@ def get_favorites():
             ''', (podcast_id, title, author, image, rss_url))
         except:
             continue
+
     conn.commit()
     c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
               % ','.join('?' * len(default_feeds)),
@@ -137,11 +141,13 @@ def get_episodes(pid):
     if rows:
         conn.close()
         return jsonify(rows)
+
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
         conn.close()
         return jsonify({'error': 'Podcast not found'}), 404
+
     feed = feedparser.parse(row[0])
     all_eps = []
     for item in feed.entries:
@@ -173,162 +179,82 @@ def get_episodes(pid):
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
-# -------------------- YOUTUBE SECTION --------------------
-
-CHANNELS = {
-    "maxvelocity": "https://youtube.com/@maxvelocitywx/videos",
-    "babu": "https://www.youtube.com/@babu_ramachandran/videos",
-    "dhruv": "https://youtube.com/@dhruvrathee/videos",
-    "safari": "https://youtube.com/@safaritvlive/videos"
-}
-
+# =============================
+# YOUTUBE → MP3 FUNCTIONS
+# =============================
 COOKIES_FILE = "/mnt/data/cookies.txt"
 
-def fetch_latest_mp3(url):
+def fetch_latest_video_mp3(url, output_path):
     try:
-        result = subprocess.run([
-            "yt-dlp", "--dump-single-json",
-            "--playlist-end", "1",
+        cmd = [
+            "yt-dlp",
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--max-downloads", "1",
             "--cookies", COOKIES_FILE,
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "--output", output_path,
             url
-        ], capture_output=True, text=True, check=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error fetching video from {url}: {e}")
-        return None
+        ]
+        subprocess.run(cmd, check=True)
+    except Exception as e:
+        app.logger.error(f"Error fetching video from {url}: {e}")
 
-@app.route('/<channel>.mp3')
-def channel_mp3(channel):
-    if channel not in CHANNELS:
-        return "Channel not found", 404
-    data = fetch_latest_mp3(CHANNELS[channel])
-    if not data:
-        return "Error fetching video", 500
-    return jsonify(data)
+@app.route('/babu.mp3')
+def babu_mp3():
+    path = "/mnt/data/babu.mp3"
+    if not os.path.exists(path):
+        fetch_latest_video_mp3("https://www.youtube.com/@babu_ramachandran/videos", path)
+    return send_file(path, mimetype="audio/mpeg")
 
-@app.route('/yt')
-def youtube_index():
-    return '''
-    <html><head><title>YouTube MP3</title></head><body>
-    <h3>🎬 YouTube to MP3</h3>
-    <ul>
-      <li><a href="/maxvelocity.mp3">Max Velocity</a></li>
-      <li><a href="/babu.mp3">Babu Ramachandran</a></li>
-      <li><a href="/dhruv.mp3">Dhruv Rathee</a></li>
-      <li><a href="/safari.mp3">Safari TV</a></li>
-    </ul>
-    </body></html>
-    '''
-
-# -------------------- UI ROUTES --------------------
-
-# -------------------- UI ROUTES --------------------
-
+# =============================
+# LANDING PAGE + ROUTES
+# =============================
 @app.route('/')
-def landing_page():
-    return '''
-    <!DOCTYPE html>
-    <html><head>
-      <title>Media Hub</title>
-      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
-    </head><body class="p-3">
-      <div class="container">
-        <h2 class="mb-4">📺 Media Hub</h2>
-        <div class="row g-3">
-          <div class="col-6">
-            <div class="card shadow-sm">
-              <div class="card-body text-center">
-                <h5 class="card-title">🎬 YouTube MP3</h5>
-                <p class="card-text">Convert latest videos to MP3</p>
-                <a href="/yt" class="btn btn-primary">Open</a>
-              </div>
-            </div>
-          </div>
-          <div class="col-6">
-            <div class="card shadow-sm">
-              <div class="card-body text-center">
-                <h5 class="card-title">🎧 Podcast</h5>
-                <p class="card-text">Stream and download podcasts</p>
-                <a href="/podcast" class="btn btn-success">Open</a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </body></html>
-    '''
-
-@app.route('/podcast')
-def podcast_ui():
+def landing():
     return render_template_string("""
     <!DOCTYPE html>
-    <html lang="en">
+    <html>
     <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Podcast Player</title>
-      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-      <style>
-        body { padding: 1rem; }
-        .episode { margin-bottom: 1rem; }
-        .podcast-card { cursor: pointer; }
-      </style>
+        <title>Media Hub</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     </head>
-    <body>
-      <div class="container">
-        <h2 class="mb-4">🎧 Podcast Player</h2>
-        <div id="podcast-list" class="row"></div>
-        <div id="episode-list" class="mt-4"></div>
-      </div>
-
-      <script>
-        async function loadPodcasts() {
-          let res = await fetch('/api/favorites');
-          let podcasts = await res.json();
-          let container = document.getElementById('podcast-list');
-          container.innerHTML = '';
-          podcasts.forEach(p => {
-            let col = document.createElement('div');
-            col.className = 'col-md-4';
-            col.innerHTML = `
-              <div class="card podcast-card" onclick="loadEpisodes('${p.podcast_id}')">
-                <img src="${p.cover_url}" class="card-img-top" alt="${p.title}">
-                <div class="card-body">
-                  <h5 class="card-title">${p.title}</h5>
-                  <p class="card-text">${p.author}</p>
+    <body class="container py-4">
+        <h2 class="mb-4">🎵 Media Hub</h2>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card shadow-sm mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">📺 YouTube MP3</h5>
+                        <p class="card-text">Download the latest YouTube audio as MP3.</p>
+                        <a href="/yt" class="btn btn-primary">Go</a>
+                    </div>
                 </div>
-              </div>`;
-            container.appendChild(col);
-          });
-        }
-        async function loadEpisodes(pid) {
-          let res = await fetch('/api/podcast/' + encodeURIComponent(pid) + '/episodes');
-          let eps = await res.json();
-          let container = document.getElementById('episode-list');
-          container.innerHTML = '';
-          eps.forEach(ep => {
-            let div = document.createElement('div');
-            div.className = 'episode card';
-            div.innerHTML = `
-              <div class="card-body">
-                <h5 class="card-title">${ep.title}</h5>
-                <p class="card-text">${ep.description}</p>
-                <audio controls src="${ep.audio_url}" class="w-100"></audio>
-              </div>`;
-            container.appendChild(div);
-          });
-          await fetch('/api/mark_played/' + encodeURIComponent(pid), {method: 'POST'});
-        }
-        loadPodcasts();
-      </script>
+            </div>
+            <div class="col-md-6">
+                <div class="card shadow-sm mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">🎧 Podcast Player</h5>
+                        <p class="card-text">Browse and play your favorite podcasts.</p>
+                        <a href="/podcast" class="btn btn-success">Go</a>
+                    </div>
+                </div>
+            </div>
+        </div>
     </body>
     </html>
     """)
 
+@app.route('/yt')
+def yt_ui():
+    return "<h3>📺 YouTube → MP3 Page</h3><p>Use /babu.mp3 to test audio download.</p>"
+
 @app.route('/podcast')
 def podcast_ui():
-    return homepage()  # reuse podcast HTML UI
+    return render_template_string(open(__file__).read().split("return '''")[1].split("'''")[0])
 
+# =============================
+# MAIN
+# =============================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
