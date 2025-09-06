@@ -7,6 +7,7 @@ import threading
 from flask import Flask, Response, request
 from pathlib import Path
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -19,23 +20,19 @@ EXPIRE_AGE = 7200             # 2 hours
 # Fixed user agent
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
+# Channels
 CHANNELS = {
-
-"vallathorukatha": "https://www.youtube.com/@babu_ramachandran/videos",
+    "vallathorukatha": "https://www.youtube.com/@babu_ramachandran/videos",
     "furqan": "https://youtube.com/@alfurqan4991/videos",
     "skicr": "https://youtube.com/@skicrtv/videos",
     "dhruvrathee": "https://youtube.com/@dhruvrathee/videos",
     "safari": "https://youtube.com/@safaritvlive/videos",
-
-"qasimi": "https://www.youtube.com/@quranstudycentremukkam/videos",
+    "qasimi": "https://www.youtube.com/@quranstudycentremukkam/videos",
     "sharique": "https://youtube.com/@shariquesamsudheen/videos",
-
-
     "vijayakumarblathur": "https://youtube.com/@vijayakumarblathur/videos",
- "entridegree": "https://youtube.com/@entridegreelevelexams/videos",
-     "talent": "https://youtube.com/@talentacademyonline/videos",
-
-   "drali": "https://youtube.com/@draligomaa/videos",
+    "entridegree": "https://youtube.com/@entridegreelevelexams/videos",
+    "talent": "https://youtube.com/@talentacademyonline/videos",
+    "drali": "https://youtube.com/@draligomaa/videos",
     "yaqeen": "https://youtube.com/@yaqeeninstituteofficial/videos",
     "ccm": "https://youtube.com/@cambridgecentralmosque/videos",
     "maheen": "https://youtube.com/@hitchhikingnomaad/videos",
@@ -44,62 +41,64 @@ CHANNELS = {
     "jrstudio": "https://youtube.com/@jrstudiomalayalam/videos",
     "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
     "parvinder": "https://www.youtube.com/@pravindersheoran/videos",
-
-
     "suprabhatam": "https://youtube.com/@suprabhaatham2023/videos",
     "bayyinah": "https://youtube.com/@bayyinah/videos",
-
-    "sunnxt": "https://youtube.com/@sunnxtmalayalam/videos",
-    "movieworld": "https://youtube.com/@movieworldmalayalammovies/videos",
-    "comedy": "https://youtube.com/@malayalamcomedyscene5334/videos",
-    "studyiq": "https://youtube.com/@studyiqiasenglish/videos",
-    "sreekanth": "https://youtube.com/@sreekanthvettiyar/videos",
-    "jr": "https://youtube.com/@yesitsmejr/videos",
-    "habib": "https://youtube.com/@habibomarcom/videos",
-    "unacademy": "https://youtube.com/@unacademyiasenglish/videos",
-    "eftguru": "https://youtube.com/@eftguru-ql8dk/videos",
-    "anurag": "https://youtube.com/@anuragtalks1/videos",
 }
 
-VIDEO_CACHE = {
-    name: {"url": None, "last_checked": 0, "thumbnail": "", "upload_date": "", "title": "", "channel": ""}
-    for name in CHANNELS
-}
+# Video cache and last video IDs
+VIDEO_CACHE = {name: {"url": None, "last_checked": 0, "thumbnail": "", "upload_date": "", "title": "", "channel": ""} for name in CHANNELS}
 LAST_VIDEO_ID = {name: None for name in CHANNELS}
+
+# Temporary directory for MP3s
 TMP_DIR = Path("/tmp/ytmp3")
 TMP_DIR.mkdir(exist_ok=True)
 
-def fetch_latest_video_url(name, channel_url):
-    try:
-        result = subprocess.run([
+def fetch_latest_video_url(name, channel_url, cookies_path="/mnt/data/cookies.txt"):
+    """Fetch latest video URL, thumbnail, and info for a channel."""
+    # Remove trailing /videos
+    if channel_url.endswith("/videos"):
+        channel_url = channel_url.rsplit("/videos", 1)[0]
+
+    # Try with cookies first, then without
+    for use_cookies in [True, False]:
+        cmd = [
             "yt-dlp",
             "--dump-single-json",
             "--playlist-end", "1",
-            "--cookies", "/mnt/data/cookies.txt",
             "--user-agent", FIXED_USER_AGENT,
             channel_url
-        ], capture_output=True, text=True, check=True)
+        ]
+        if use_cookies:
+            cmd.insert(1, "--cookies")
+            cmd.insert(2, cookies_path)
 
-        data = json.loads(result.stdout)
-        video = data["entries"][0]
-        video_id = video["id"]
-        thumbnail_url = video.get("thumbnail", "")
-        upload_date = video.get("upload_date", "")
-        title = video.get("title", "")
-        channel = video.get("channel", "")
-        return f"https://www.youtube.com/watch?v={video_id}", thumbnail_url, video_id, upload_date, title, channel
-    except Exception as e:
-        logging.error(f"Error fetching video from {channel_url}: {e}")
-        return None, None, None, None, None, None
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            video = data["entries"][0]
+            video_id = video["id"]
+            thumbnail_url = video.get("thumbnail", "")
+            upload_date = video.get("upload_date", "")
+            title = video.get("title", "")
+            channel_name = video.get("channel", "")
+            return f"https://www.youtube.com/watch?v={video_id}", thumbnail_url, video_id, upload_date, title, channel_name
+
+        except subprocess.CalledProcessError as e:
+            logging.warning(f"yt-dlp failed for {channel_url} (cookies={use_cookies}): {e.stderr.strip()}")
+        except Exception as e:
+            logging.error(f"Unexpected error fetching video from {channel_url}: {e}")
+
+    return None, None, None, None, None, None
 
 def format_upload_month(upload_date):
     try:
         dt = datetime.strptime(upload_date, "%Y%m%d")
-        return dt.strftime("%B %Y")  # e.g., "April 2025"
+        return dt.strftime("%B %Y")
     except Exception:
         return "Unknown"
 
 def download_and_convert(channel, video_url):
+    """Download video audio and convert to MP3 with thumbnail."""
     final_path = TMP_DIR / f"{channel}.mp3"
     if final_path.exists():
         return final_path
@@ -111,14 +110,13 @@ def download_and_convert(channel, video_url):
         audio_path = base_path.with_suffix(".webm")
         thumb_path = base_path.with_suffix(".jpg")
 
-        # Download best audio and thumbnail
+        # Download best audio + thumbnail
         subprocess.run([
             "yt-dlp",
-            "-f", "18",
+            "-f", "bestaudio",
             "--output", str(base_path) + ".%(ext)s",
             "--write-thumbnail",
             "--convert-thumbnails", "jpg",
-            "--cookies", "/mnt/data/cookies.txt",
             "--user-agent", FIXED_USER_AGENT,
             video_url
         ], check=True)
@@ -153,8 +151,8 @@ def download_and_convert(channel, video_url):
 
         audio_path.unlink(missing_ok=True)
         thumb_path.unlink(missing_ok=True)
-
         return final_path if final_path.exists() else None
+
     except Exception as e:
         logging.error(f"Error converting {channel}: {e}")
         partial = final_path.with_suffix(".mp3.part")
@@ -163,6 +161,7 @@ def download_and_convert(channel, video_url):
         return None
 
 def cleanup_old_files():
+    """Delete old MP3s after EXPIRE_AGE seconds."""
     while True:
         current_time = time.time()
         for file in TMP_DIR.glob("*.mp3"):
@@ -175,25 +174,34 @@ def cleanup_old_files():
         time.sleep(EXPIRE_AGE)
 
 def update_video_cache_loop():
+    """Continuously fetch latest videos for all channels in parallel."""
     while True:
-        for name, url in CHANNELS.items():
-            video_url, thumbnail, video_id, upload_date, title, channel_name = fetch_latest_video_url(name, url)
-            if video_url and video_id:
-                if LAST_VIDEO_ID[name] != video_id:
-                    LAST_VIDEO_ID[name] = video_id
-                    VIDEO_CACHE[name].update({
-                        "url": video_url,
-                        "last_checked": time.time(),
-                        "thumbnail": thumbnail,
-                        "upload_date": upload_date,
-                        "title": title,
-                        "channel": channel_name,
-                    })
-                    download_and_convert(name, video_url)
-            time.sleep(3)
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = []
+            for name, url in CHANNELS.items():
+                futures.append(executor.submit(process_channel, name, url))
+            # Wait for all to finish
+            for future in futures:
+                future.result()
         time.sleep(REFRESH_INTERVAL)
 
+def process_channel(name, url):
+    """Fetch latest video and update cache if changed."""
+    video_url, thumbnail, video_id, upload_date, title, channel_name = fetch_latest_video_url(name, url)
+    if video_url and video_id and LAST_VIDEO_ID.get(name) != video_id:
+        LAST_VIDEO_ID[name] = video_id
+        VIDEO_CACHE[name].update({
+            "url": video_url,
+            "last_checked": time.time(),
+            "thumbnail": thumbnail,
+            "upload_date": upload_date,
+            "title": title,
+            "channel": channel_name,
+        })
+        download_and_convert(name, video_url)
+
 def auto_download_mp3s():
+    """Pre-download MP3s periodically."""
     while True:
         for name, data in VIDEO_CACHE.items():
             video_url = data.get("url")
@@ -202,7 +210,7 @@ def auto_download_mp3s():
                 if not mp3_path.exists() or time.time() - mp3_path.stat().st_mtime > RECHECK_INTERVAL:
                     logging.info(f"Pre-downloading {name}")
                     download_and_convert(name, video_url)
-            time.sleep(3)
+            time.sleep(1)
         time.sleep(RECHECK_INTERVAL)
 
 @app.route("/<channel>.mp3")
@@ -233,10 +241,7 @@ def stream_mp3(channel):
 
     file_size = os.path.getsize(mp3_path)
     range_header = request.headers.get('Range', None)
-    headers = {
-        'Content-Type': 'audio/mpeg',
-        'Accept-Ranges': 'bytes',
-    }
+    headers = {'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'bytes'}
 
     if range_header:
         try:
@@ -251,11 +256,7 @@ def stream_mp3(channel):
         with open(mp3_path, 'rb') as f:
             f.seek(byte1)
             chunk = f.read(length)
-
-        headers.update({
-            'Content-Range': f'bytes {byte1}-{byte2}/{file_size}',
-            'Content-Length': str(length)
-        })
+        headers.update({'Content-Range': f'bytes {byte1}-{byte2}/{file_size}', 'Content-Length': str(length)})
         return Response(chunk, status=206, headers=headers)
 
     with open(mp3_path, 'rb') as f:
@@ -271,48 +272,19 @@ def index():
         <title>YouTube Mp3</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {
-                font-family: sans-serif;
-                font-size: 14px;
-                background: #fff;
-                margin: 0;
-                padding: 10px;
-            }
-            h3 {
-                text-align: center;
-            }
-            .grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-                gap: 10px;
-            }
-            .card {
-                border: 1px solid #ccc;
-                border-radius: 8px;
-                padding: 6px;
-                background: #f9f9f9;
-            }
-            .card img {
-                width: 100%;
-                height: auto;
-                border-radius: 4px;
-                margin-bottom: 4px;
-            }
-            .card a {
-                color: #000;
-                text-decoration: none;
-                font-weight: bold;
-            }
-            .card small {
-                color: #666;
-            }
+            body { font-family: sans-serif; font-size: 14px; background: #fff; margin:0; padding:10px;}
+            h3 {text-align:center;}
+            .grid {display:grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap:10px;}
+            .card {border:1px solid #ccc; border-radius:8px; padding:6px; background:#f9f9f9;}
+            .card img {width:100%; height:auto; border-radius:4px; margin-bottom:4px;}
+            .card a {color:#000; text-decoration:none; font-weight:bold;}
+            .card small {color:#666;}
         </style>
     </head>
     <body>
         <h3>YouTube Mp3</h3>
         <div class="grid">
     """
-
     def get_upload_date(channel):
         return VIDEO_CACHE[channel].get("upload_date", "Unknown")
 
@@ -320,7 +292,7 @@ def index():
         mp3_path = TMP_DIR / f"{channel}.mp3"
         if not mp3_path.exists():
             continue
-        thumbnail = (VIDEO_CACHE[channel].get("thumbnail", "") or "http://via.placeholder.com/120x80?text=YT").replace("https://", "http://")
+        thumbnail = (VIDEO_CACHE[channel].get("thumbnail", "") or "http://via.placeholder.com/120x80?text=YT").replace("https://","http://")
         upload_date = get_upload_date(channel)
         html += f"""
             <div class="card">
@@ -332,12 +304,10 @@ def index():
             </div>
         """
 
-    html += """
-        </div>
-    </body>
-    </html>
-    """
+    html += "</div></body></html>"
     return html
+
+# Start background threads
 threading.Thread(target=update_video_cache_loop, daemon=True).start()
 threading.Thread(target=auto_download_mp3s, daemon=True).start()
 threading.Thread(target=cleanup_old_files, daemon=True).start()
