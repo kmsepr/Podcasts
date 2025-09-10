@@ -1,208 +1,308 @@
 import os
-import time
-import json
-import subprocess
-import logging
-import threading
-from flask import Flask, Response, request
-from pathlib import Path
-from datetime import datetime
+import sqlite3
+import requests
+import feedparser
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+DB_FILE = '/mnt/data/podcasts.db'
+os.makedirs('/mnt/data', exist_ok=True)
 
-# -----------------------
-# Settings
-# -----------------------
-REFRESH_INTERVAL = 1200       # 20 minutes
-EXPIRE_AGE = 7200             # 2 hours
-FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-COOKIES_PATH = "/mnt/data/cookies.txt"  # Must exist (exported from browser)
-TMP_DIR = Path("/tmp/ytmp3")
-TMP_DIR.mkdir(exist_ok=True)
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS podcasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            podcast_id TEXT UNIQUE,
+            title TEXT,
+            author TEXT,
+            cover_url TEXT,
+            rss_url TEXT,
+            last_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS episodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            podcast_id TEXT,
+            episode_id TEXT UNIQUE,
+            title TEXT,
+            description TEXT,
+            audio_url TEXT,
+            pub_date TEXT,
+            duration TEXT,
+            FOREIGN KEY(podcast_id) REFERENCES podcasts(podcast_id)
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-# -----------------------
-# YouTube channels
-# -----------------------
-CHANNELS = {
-    "vallathorukatha": "https://www.youtube.com/@babu_ramachandran/videos",
-    "furqan": "https://youtube.com/@alfurqan4991/videos",
-    "skicr": "https://youtube.com/@skicrtv/videos",
-}
+init_db()
 
-# -----------------------
-# Video cache
-# -----------------------
-VIDEO_CACHE = {
-    name: {"url": None, "last_checked": 0, "video_id": None, "title": "", "thumbnail": "", "upload_date": ""}
-    for name in CHANNELS
-}
-
-# -----------------------
-# Fetch latest video info
-# -----------------------
-def fetch_latest_video(name, channel_url):
+@app.route('/api/search')
+def search_podcasts():
+    query = request.args.get('q', '')
     try:
-        cmd = [
-            "yt-dlp",
-            "--dump-single-json",
-            "--playlist-end", "1",
-            "--cookies", COOKIES_PATH,
-            "--user-agent", FIXED_USER_AGENT,
-            channel_url
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
-        video = data["entries"][0]
-        video_id = video["id"]
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
-        VIDEO_CACHE[name] = {
-            "url": video_url,
-            "last_checked": time.time(),
-            "video_id": video_id,
-            "title": video.get("title", ""),
-            "thumbnail": video.get("thumbnail", ""),
-            "upload_date": video.get("upload_date", "")
-        }
-        logging.info(f"✅ Fetched latest video for {name}: {video_url}")
-        return video_url
+        res = requests.get(f'https://itunes.apple.com/search?media=podcast&term={query}')
+        return jsonify(res.json().get('results', []))
     except Exception as e:
-        logging.error(f"Failed to fetch latest video from {channel_url}: {e}")
-        return None
+        return jsonify({'error': str(e)}), 500
 
-# -----------------------
-# Download & convert to MP3
-# -----------------------
-def download_mp3(name):
-    info = VIDEO_CACHE[name]
-    video_url = info.get("url")
-    if not video_url:
-        return None
+@app.route('/api/episodes_from_rss', methods=['POST'])
+def episodes_from_rss():
+    data = request.get_json()
+    rss_url = data.get('rss_url')
+    if not rss_url:
+        return jsonify([])
 
-    final_path = TMP_DIR / f"{name}.mp3"
-    if final_path.exists():
-        return final_path
+    feed = feedparser.parse(rss_url)
+    results = []
+    for item in feed.entries[:10]:
+        audio = ''
+        for enc in item.get('enclosures', []):
+            if enc.get('href', '').startswith('http'):
+                audio = enc['href']
+                break
+        if not audio:
+            continue
+        results.append({
+            'title': item.get('title', ''),
+            'description': item.get('summary', '') or item.get('description', ''),
+            'pub_date': item.get('published', ''),
+            'audio_url': audio
+        })
+    return jsonify(results)
 
-    base_path = TMP_DIR / name
-    audio_path = base_path.with_suffix(".webm")
-    thumb_path = base_path.with_suffix(".jpg")
+@app.route('/api/favorites')
+def get_favorites():
+    offset = int(request.args.get('offset', 0))
+    limit = 5
+    default_feeds = [
+        
+        "https://muslimcentral.com/audio/hamza-yusuf/feed/",
+        "https://feeds.megaphone.fm/THGU4956605070",
+        
+        
+        "https://feeds.buzzsprout.com/2050847.rss",
+         "https://muslimcentral.com/audio/the-deen-show/feed/",
+        "https://feeds.buzzsprout.com/1194665.rss",
+        "https://www.spreaker.com/show/5085297/episodes/feed",
+        
+    ]
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
-    try:
-        # Download audio + thumbnail
-        subprocess.run([
-            "yt-dlp",
-            "-f", "bestaudio",
-            "--output", str(base_path) + ".%(ext)s",
-            "--write-thumbnail",
-            "--convert-thumbnails", "jpg",
-            "--cookies", COOKIES_PATH,
-            "--user-agent", FIXED_USER_AGENT,
-            video_url
-        ], check=True)
-
-        # Convert to MP3 with embedded thumbnail
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", str(audio_path),
-            "-i", str(thumb_path),
-            "-map", "0:a",
-            "-map", "1:v",
-            "-c:a", "libmp3lame",
-            "-c:v", "mjpeg",
-            "-b:a", "64k",
-            "-ar", "22050",
-            "-ac", "1",
-            "-id3v2_version", "3",
-            "-metadata", f"title={info.get('title','')}",
-            "-metadata", f"artist={name}",
-            "-metadata", f"album=YouTube",
-            "-disposition:v", "attached_pic",
-            str(final_path)
-        ], check=True)
-
-        audio_path.unlink(missing_ok=True)
-        thumb_path.unlink(missing_ok=True)
-        logging.info(f"✅ Downloaded MP3 for {name}")
-        return final_path
-    except Exception as e:
-        logging.error(f"Failed to download/convert {name}: {e}")
-        return None
-
-# -----------------------
-# Background thread to refresh videos
-# -----------------------
-def refresh_videos_loop():
-    while True:
-        for name, url in CHANNELS.items():
-            fetch_latest_video(name, url)
-            download_mp3(name)
-            time.sleep(3)
-        time.sleep(REFRESH_INTERVAL)
-
-# -----------------------
-# Cleanup old files
-# -----------------------
-def cleanup_loop():
-    while True:
-        now = time.time()
-        for file in TMP_DIR.glob("*.mp3"):
-            if now - file.stat().st_mtime > EXPIRE_AGE:
-                logging.info(f"Deleting old file: {file}")
-                file.unlink()
-        time.sleep(EXPIRE_AGE)
-
-# -----------------------
-# Flask routes
-# -----------------------
-@app.route("/<channel>.mp3")
-def stream_mp3(channel):
-    if channel not in CHANNELS:
-        return "Channel not found", 404
-    mp3_path = TMP_DIR / f"{channel}.mp3"
-    if not mp3_path.exists():
-        download_mp3(channel)
-        if not mp3_path.exists():
-            return "Error preparing stream", 500
-
-    range_header = request.headers.get('Range', None)
-    file_size = os.path.getsize(mp3_path)
-    headers = {'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'bytes'}
-
-    if range_header:
+    for rss_url in default_feeds:
         try:
-            byte1, byte2 = (range_header.strip().split('=')[1].split('-') + [file_size - 1])[:2]
-            byte1, byte2 = int(byte1), int(byte2)
-            length = byte2 - byte1 + 1
-            with open(mp3_path, 'rb') as f:
-                f.seek(byte1)
-                chunk = f.read(length)
-            headers.update({
-                'Content-Range': f'bytes {byte1}-{byte2}/{file_size}',
-                'Content-Length': str(length)
-            })
-            return Response(chunk, status=206, headers=headers)
-        except Exception:
-            return "Invalid Range header", 400
+            feed = feedparser.parse(rss_url)
+            if not feed.entries:
+                continue
+            podcast_id = rss_url
+            title = feed.feed.get('title', 'Untitled')
+            author = feed.feed.get('author', 'Unknown')
+            image = (feed.feed.get('image', {}) or {}).get('href', '') or \
+                    feed.feed.get('itunes_image', {}).get('href', '')
+            c.execute('''
+                INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (podcast_id, title, author, image, rss_url))
+        except:
+            continue
 
-    with open(mp3_path, 'rb') as f:
-        data = f.read()
-    headers['Content-Length'] = str(file_size)
-    return Response(data, headers=headers)
+    conn.commit()
+    c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
+              % ','.join('?' * len(default_feeds)),
+              (*default_feeds, limit, offset))
+    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
+    conn.close()
+    return jsonify(rows)
 
-@app.route("/")
-def index():
-    html = "<h3>YouTube Latest Videos (MP3)</h3><ul>"
-    for name, info in VIDEO_CACHE.items():
-        if info["url"]:
-            html += f"<li><a href='/{name}.mp3'>{name} - {info.get('title','')}</a></li>"
-    html += "</ul>"
-    return html
+@app.route('/api/mark_played/<path:pid>', methods=['POST'])
+def mark_played(pid):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('UPDATE podcasts SET last_played = CURRENT_TIMESTAMP WHERE podcast_id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Marked as played'})
 
-# -----------------------
-# Start background threads
-# -----------------------
-threading.Thread(target=refresh_videos_loop, daemon=True).start()
-threading.Thread(target=cleanup_loop, daemon=True).start()
+@app.route('/api/podcast/<path:pid>/episodes')
+def get_episodes(pid):
+    offset = int(request.args.get('offset', 0))
+    limit = 9
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
+    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
+    if rows:
+        conn.close()
+        return jsonify(rows)
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Podcast not found'}), 404
+
+    feed = feedparser.parse(row[0])
+    all_eps = []
+    for item in feed.entries:
+        eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
+        audio = ''
+        for enc in item.get('enclosures', []):
+            if enc.get('href', '').startswith('http'):
+                audio = enc['href']
+                break
+        if not audio:
+            continue
+        title = item.get('title', '')
+        desc = item.get('summary', '') or item.get('description', '')
+        pub_date = item.get('published', '')
+        duration = item.get('itunes_duration', '')
+        c.execute('''
+            INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (pid, eid, title, desc, audio, pub_date, duration))
+        all_eps.append({
+            'episode_id': eid,
+            'title': title,
+            'description': desc,
+            'audio_url': audio,
+            'pub_date': pub_date,
+            'duration': duration
+        })
+    conn.commit()
+    conn.close()
+    return jsonify(all_eps[offset:offset + limit])
+
+@app.route('/')
+def homepage():
+    return '''
+<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title><style>
+body{font-family:sans-serif;font-size:14px;margin:4px}
+input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
+.tiny{font-size:11px;color:#666} audio{width:100%; margin-top:5px}
+</style></head><body><h3>🎧 Podcast</h3>
+<p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
+<input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
+<button onclick="showFavs()">⭐ My Favorites</button>
+<div id="results"></div>
+<div id="playerBox" style="display:none">
+  <div class="card">
+    <b id="epTitle"></b><br><span class="tiny" id="epDate"></span><br>
+    <audio id="player" controls></audio><br>
+    <p id="epDesc" style="margin-top:6px"></p>
+    <a id="downloadBtn" href="#" download style="display:inline-block;margin:5px 0">📥 Download MP3</a><br>
+    <button onclick="prevEp()">⏮️</button>
+    <button onclick="togglePlay()">⏯️</button>
+    <button onclick="nextEp()">⏭️</button>
+  </div>
+</div>
+<script>
+const B = location.origin;
+function e(id){return document.getElementById(id);}
+document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
+
+async function search(){
+  let q = e('q').value;
+  let r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  let d = await r.json();
+  let o = e('results');
+  o.innerHTML = '';
+  d.forEach(p => {
+    if (!p.feedUrl) return;
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br>
+    <button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`;
+    o.appendChild(div);
+  });
+}
+
+async function previewFeed(url){
+  e('results').innerHTML = '⏳ Fetching latest episode...';
+  let r = await fetch('/api/episodes_from_rss', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rss_url: url})
+  });
+  let d = await r.json();
+  if (d.length) showPlayer(d, true);
+  else e('results').innerHTML = '❌ No episodes found.';
+}
+
+let favOffset = 0;
+async function showFavs(){ favOffset = 0; loadFavPage(true); }
+
+async function loadFavPage(reset){
+  let r = await fetch(`/api/favorites?offset=${favOffset}`);
+  let d = await r.json();
+  let o = e('results');
+  if (reset) o.innerHTML = '';
+  d.forEach(p => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
+    <button onclick="loadEp('${p.podcast_id}')">📻 Latest Episode</button>`;
+    o.appendChild(div);
+  });
+  if (d.length === 5) {
+    let btn = document.createElement('button');
+    btn.innerText = '⏬ More';
+    btn.onclick = () => { favOffset += 5; loadFavPage(false); };
+    o.appendChild(btn);
+  }
+}
+
+let currentId = '', currentList = [], currentIndex = 0;
+async function loadEp(id){
+  currentId = id; currentIndex = 0;
+  e('results').innerHTML = '⏳ Loading latest...';
+  await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
+  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+  let d = await r.json();
+  if (d.length) showPlayer(d, true);
+  else e('results').innerHTML = '❌ No episodes found.';
+}
+
+function showPlayer(data, reset){
+  currentList = data;
+  currentIndex = 0;
+  showEpisode(currentList[currentIndex]);
+  e('playerBox').style.display = 'block';
+  e('results').innerHTML = '';
+}
+
+function showEpisode(ep){
+  e('epTitle').innerText = ep.title;
+  e('epDate').innerText = ep.pub_date;
+  e('epDesc').innerText = ep.description || '';
+  e('player').src = ep.audio_url;
+  e('downloadBtn').href = ep.audio_url;
+  e('player').play();
+}
+
+function prevEp(){
+  if (currentIndex > 0) {
+    currentIndex--;
+    showEpisode(currentList[currentIndex]);
+  }
+}
+
+function nextEp(){
+  if (currentIndex < currentList.length - 1) {
+    currentIndex++;
+    showEpisode(currentList[currentIndex]);
+  }
+}
+
+function togglePlay(){
+  let p = e('player');
+  if (p.paused) p.play(); else p.pause();
+}
+</script></body></html>
+'''
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=3000)
