@@ -247,6 +247,20 @@ PODCAST_GRID_HTML = """
     }
     .searchbox { margin-top:20px; }
     .results, .saved { margin-top:20px; }
+    .saved-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 15px;
+    }
+    .saved-item {
+      background:white; color:black;
+      border-radius:12px; padding:10px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      text-align:center;
+    }
+    .saved-item img { border-radius:8px; max-width:100px; margin-bottom:8px; }
+    .saved-item b { display:block; font-size:14px; margin-bottom:6px; }
+    .saved-item button { margin-top:6px; }
     .podcast {
       background:white; color:black;
       border-radius:12px; padding:10px; margin:10px 0;
@@ -294,15 +308,15 @@ PODCAST_GRID_HTML = """
   {% if saved %}
     <div class="saved">
       <h3>Saved Podcasts</h3>
-      {% for pid, title, rss, cover in saved %}
-        <div class="podcast">
-          {% if cover %}<img src="{{ cover }}" width="60">{% endif %}
-          <b>{{ title }}</b>
-          <small>{{ rss }}</small>
-          <a href="/podcast/{{ pid }}"><button>Open</button></a>
-          <div class="clear"></div>
-        </div>
-      {% endfor %}
+      <div class="saved-grid">
+        {% for pid, title, rss, cover in saved %}
+          <div class="saved-item">
+            {% if cover %}<img src="{{ cover }}">{% endif %}
+            <b>{{ title }}</b>
+            <a href="/podcast/{{ pid }}"><button>Open</button></a>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   {% endif %}
 </body>
