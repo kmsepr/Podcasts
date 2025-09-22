@@ -22,7 +22,6 @@ DEFAULT_FEEDS = [
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Table to store Swalath total
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_total (
             id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -50,8 +49,10 @@ def add_swalath():
     number = data.get('number', 0)
     try:
         number = int(number)
+        if number <= 0:
+            raise ValueError
     except:
-        return jsonify({'error': 'Invalid number'}), 400
+        return jsonify({'error': 'Enter a positive number'}), 400
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('UPDATE swalath_total SET total = total + ? WHERE id=1', (number,))
@@ -87,28 +88,36 @@ HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=320">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Podcast & Swalath</title>
 <style>
-body{font-family:sans-serif;font-size:14px;margin:4px}
-button,input{width:100%;margin:4px 0;padding:4px}
-.card{border:1px solid #ccc;padding:5px;margin-top:6px}
+body{font-family:sans-serif;font-size:14px;margin:0;padding:0;background:#f7f7f7;color:#333}
+.container{max-width:400px;margin:0 auto;padding:10px}
+h3{margin-top:20px;color:#444}
+.card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
+input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
+button{background:#4CAF50;color:white;border:none;cursor:pointer;font-size:14px}
+button:hover{background:#45a049}
 .tiny{font-size:11px;color:#666}
-audio{width:100%; margin-top:5px}
+audio{width:100%;margin-top:5px;border-radius:4px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
 
-<h3>🙏 Add Swalath</h3>
-<div class="card">
-  <input type="number" id="swalathNumber" placeholder="Enter number" min="1" value="1">
-  <button onclick="submitSwalath()">➕ Add</button>
-  <p>Total Swalath: <span id="swalathTotal">0</span></p>
-</div>
+<div class="container">
 
-<h3>⭐ Favorites</h3>
-<div id="favResults"></div>
+  <h3>🙏 Add Swalath</h3>
+  <div class="card">
+    <input type="number" id="swalathNumber" placeholder="Enter number of Swalath" min="1">
+    <button onclick="submitSwalath()">➕ Add</button>
+    <p>Total Swalath: <span id="swalathTotal">0</span></p>
+  </div>
+
+  <h3>⭐ Favorites</h3>
+  <div id="favResults"></div>
+
+</div>
 
 <script>
 // Load current total
@@ -121,6 +130,7 @@ async function loadSwalathTotal(){
 // Submit number and increment total
 async function submitSwalath(){
   let number = document.getElementById('swalathNumber').value;
+  if(!number){ Swal.fire({icon:'error',title:'Error',text:'Enter a number'}); return; }
   let r = await fetch('/api/swalath/add', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -130,7 +140,7 @@ async function submitSwalath(){
   if(r.ok){
     document.getElementById('swalathTotal').innerText = d.total;
     Swal.fire({icon:'success',title:'Added!',text:`Total: ${d.total}`,timer:1200,showConfirmButton:false});
-    document.getElementById('swalathNumber').value = 1;
+    document.getElementById('swalathNumber').value='';
   } else {
     Swal.fire({icon:'error',title:'Error',text:d.error});
   }
