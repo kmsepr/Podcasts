@@ -195,7 +195,7 @@ button{background:#4CAF50;color:white;border:none;cursor:pointer}
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
-<h2>🙏 Swalath</h2>
+<h2>📿 Swalath</h2>
 <div class="card">
   <input type="number" id="swalathNumber" placeholder="Enter number" min="1">
   <button onclick="submitSwalath()">➕ Add</button>
