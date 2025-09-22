@@ -1,22 +1,12 @@
 from flask import Flask, jsonify, render_template_string, request
 import sqlite3
 import os
-import feedparser
+import requests
 
 app = Flask(__name__)
 
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
-
-# Hardcoded podcast RSS feeds
-DEFAULT_FEEDS = [
-    "https://muslimcentral.com/audio/hamza-yusuf/feed/",
-    "https://feeds.megaphone.fm/THGU4956605070",
-    "https://feeds.buzzsprout.com/2050847.rss",
-    "https://muslimcentral.com/audio/the-deen-show/feed/",
-    "https://feeds.buzzsprout.com/1194665.rss",
-    "https://www.spreaker.com/show/5085297/episodes/feed"
-]
 
 # ---------------- Database ----------------
 def init_db():
@@ -62,26 +52,18 @@ def add_swalath():
     conn.close()
     return jsonify({'total': total})
 
-@app.route('/api/favorites')
-def get_favorites():
-    results = []
-    for rss in DEFAULT_FEEDS:
-        feed = feedparser.parse(rss)
-        if not feed.entries: continue
-        latest = feed.entries[0]
-        audio_url = ''
-        for enc in latest.get('enclosures', []):
-            if enc.get('href', '').startswith('http'):
-                audio_url = enc['href']
-                break
-        results.append({
-            'title': feed.feed.get('title', 'Untitled'),
-            'author': feed.feed.get('author', 'Unknown'),
-            'episode_title': latest.get('title', ''),
-            'pub_date': latest.get('published', ''),
-            'audio_url': audio_url
-        })
-    return jsonify(results)
+@app.route('/api/search_podcasts')
+def search_podcasts():
+    query = request.args.get('query', '').strip()
+    if not query:
+        return jsonify({'results': []})
+    url = "https://itunes.apple.com/search"
+    params = {'term': query, 'media': 'podcast', 'limit': 10}
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        return jsonify(r.json())
+    except:
+        return jsonify({'results': []})
 
 # ---------------- HTML ----------------
 HTML = """
@@ -116,10 +98,11 @@ audio{width:100%;margin-top:5px;border-radius:4px}
 <div class="container">
 
   <div class="tab">
-    <button class="tablinks active" onclick="openTab(event,'Swalath')">📿 Add Swalath</button>
+    <button class="tablinks active" onclick="openTab(event,'Swalath')">🙏 Add Swalath</button>
     <button class="tablinks" onclick="openTab(event,'Favorites')">⭐ Favorites</button>
   </div>
 
+  <!-- Swalath Tab -->
   <div id="Swalath" class="tabcontent" style="display:block">
     <div class="card">
       <input type="number" id="swalathNumber" placeholder="Enter number of Swalath" min="1">
@@ -128,8 +111,10 @@ audio{width:100%;margin-top:5px;border-radius:4px}
     </div>
   </div>
 
+  <!-- Favorites Tab -->
   <div id="Favorites" class="tabcontent">
-    <button onclick="loadFavorites()">📥 Load Latest Episodes</button>
+    <input type="text" id="searchQuery" placeholder="Search podcasts...">
+    <button onclick="searchPodcasts()">🔍 Search</button>
     <div id="favResults"></div>
   </div>
 
@@ -173,18 +158,20 @@ async function submitSwalath(){
   }
 }
 
-// Load favorites when user clicks
-async function loadFavorites(){
-  let r = await fetch('/api/favorites');
-  let d = await r.json();
-  let o = document.getElementById('favResults');
+// Search podcasts via iTunes API
+async function searchPodcasts() {
+  const query = document.getElementById('searchQuery').value.trim();
+  if (!query) return;
+  const r = await fetch(`/api/search_podcasts?query=${encodeURIComponent(query)}`);
+  const data = await r.json();
+  const o = document.getElementById('favResults');
   o.innerHTML = '';
-  d.forEach(f => {
+  data.results.forEach(f => {
     let div = document.createElement('div');
     div.className = 'card';
-    div.innerHTML = `<b>${f.title}</b> - ${f.author}<br>
-                     <span class='tiny'>${f.episode_title} (${f.pub_date})</span><br>
-                     <audio controls src="${f.audio_url}"></audio>`;
+    div.innerHTML = `<b>${f.collectionName}</b><br>
+                     <span class='tiny'>${f.artistName}</span><br>
+                     <audio controls src="${f.previewUrl || ''}"></audio>`;
     o.appendChild(div);
   });
 }
