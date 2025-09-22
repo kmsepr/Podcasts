@@ -135,18 +135,82 @@ HOME_HTML = """
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Home - Dikr & Podcasts</title>
+<title>Home</title>
 <style>
-body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
-.container{max-width:500px;margin:0 auto;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.card{background:#fff;padding:20px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer}
-.card:hover{box-shadow:0 4px 10px rgba(0,0,0,0.2)}
+body{
+    font-family:sans-serif;
+    margin:0;
+    padding:0;
+    background:#f7f7f7;
+    color:#333;
+}
+.container{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(200px,1fr));
+    gap:20px;
+    max-width:900px;
+    margin:50px auto;
+    padding:0 20px;
+}
+.card{
+    background:#4CAF50;
+    color:white;
+    font-size:22px;
+    font-weight:bold;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    height:200px;
+    border-radius:20px;
+    box-shadow:0 4px 10px rgba(0,0,0,0.2);
+    cursor:pointer;
+    transition:transform 0.2s, box-shadow 0.2s;
+    text-align:center;
+    padding:10px;
+}
+.card:hover{
+    transform:scale(1.05);
+    box-shadow:0 8px 20px rgba(0,0,0,0.3);
+}
+.card img{
+    width:60px;
+    height:60px;
+    margin-bottom:10px;
+}
+@media(max-width:500px){
+    .container{
+        grid-template-columns:1fr;
+    }
+    .card{
+        height:180px;
+        font-size:20px;
+    }
+    .card img{
+        width:50px;
+        height:50px;
+    }
+}
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="card" onclick="location.href='/swalath'">🙏 Dikr / Swalath</div>
-  <div class="card" onclick="location.href='/podcasts'">🎧 Podcasts</div>
+  <div class="card" onclick="location.href='/swalath'">
+    <img src="https://img.icons8.com/ios-filled/50/prayer-mat.png"/>
+    🙏 Dikr / Swalath
+  </div>
+  <div class="card" onclick="location.href='/podcasts'">
+    <img src="https://img.icons8.com/ios-filled/50/podcast.png"/>
+    🎧 Podcasts
+  </div>
+  <div class="card" onclick="location.href='http://capitalist-anthe-pscj-4a28f285.koyeb.app/'">
+    <img src="https://img.icons8.com/ios-filled/50/youtube-live.png"/>
+    ▶️ YouTube Live
+  </div>
+  <div class="card" onclick="location.href='http://zippy-gretta-pscjunction-b779efe8.koyeb.app/'">
+    <img src="https://img.icons8.com/ios-filled/50/newspaper.png"/>
+    📰 Suprabhatham Newspaper
+  </div>
 </div>
 </body>
 </html>
