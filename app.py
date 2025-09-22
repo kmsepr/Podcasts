@@ -153,7 +153,6 @@ body{
     padding:0 20px;
 }
 .card{
-    background:#4CAF50;
     color:white;
     font-size:22px;
     font-weight:bold;
@@ -169,15 +168,22 @@ body{
     text-align:center;
     padding:10px;
 }
-.card:hover{
-    transform:scale(1.05);
-    box-shadow:0 8px 20px rgba(0,0,0,0.3);
-}
 .card img{
     width:60px;
     height:60px;
     margin-bottom:10px;
 }
+.card:hover{
+    transform:scale(1.05);
+    box-shadow:0 8px 20px rgba(0,0,0,0.3);
+}
+
+/* Individual colors */
+.card.dikr{background:#4CAF50;}
+.card.podcast{background:orange;}
+.card.youtube{background:red;}
+.card.newspaper{background:violet;}
+
 @media(max-width:500px){
     .container{
         grid-template-columns:1fr;
@@ -195,19 +201,19 @@ body{
 </head>
 <body>
 <div class="container">
-  <div class="card" onclick="location.href='/swalath'">
+  <div class="card dikr" onclick="location.href='/swalath'">
     <img src="https://img.icons8.com/ios-filled/50/prayer-mat.png"/>
-    🙏 Dikr / Swalath
+    📿 Dikr / Swalath
   </div>
-  <div class="card" onclick="location.href='/podcasts'">
+  <div class="card podcast" onclick="location.href='/podcasts'">
     <img src="https://img.icons8.com/ios-filled/50/podcast.png"/>
     🎧 Podcasts
   </div>
-  <div class="card" onclick="location.href='http://capitalist-anthe-pscj-4a28f285.koyeb.app/'">
+  <div class="card youtube" onclick="location.href='http://capitalist-anthe-pscj-4a28f285.koyeb.app/'">
     <img src="https://img.icons8.com/ios-filled/50/youtube-live.png"/>
     ▶️ YouTube Live
   </div>
-  <div class="card" onclick="location.href='http://zippy-gretta-pscjunction-b779efe8.koyeb.app/'">
+  <div class="card newspaper" onclick="location.href='http://zippy-gretta-pscjunction-b779efe8.koyeb.app/'">
     <img src="https://img.icons8.com/ios-filled/50/newspaper.png"/>
     📰 Suprabhatham Newspaper
   </div>
@@ -231,7 +237,7 @@ button{background:#4CAF50;color:white;border:none;cursor:pointer}
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
-<h2>🙏 Swalath</h2>
+<h2>📿 Swalath</h2>
 <div class="card">
   <input type="number" id="swalathNumber" placeholder="Enter number" min="1">
   <button onclick="submitSwalath()">➕ Add</button>
