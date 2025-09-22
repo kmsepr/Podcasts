@@ -139,18 +139,21 @@ def podcast_detail(pid):
     if not r: return "Not found",404
     title,rss,cover=r
     feed=feedparser.parse(rss)
-    episodes=[]
-    for entry in feed.entries[:10]:
+    latest=None
+    if feed.entries:
+        entry=feed.entries[0]  # only latest
         audio=''
         for enc in entry.get('enclosures',[]):
-            if enc.get('href','').startswith('http'): audio=enc['href']; break
-        if not audio: continue
-        episodes.append({
-            'title':entry.get('title',''),
-            'pub_date':entry.get('published',''),
-            'audio_url':audio
-        })
-    return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,episodes=episodes)
+            if enc.get('href','').startswith('http'):
+                audio=enc['href']; break
+        if audio:
+            latest={
+                'title':entry.get('title',''),
+                'pub_date':entry.get('published',''),
+                'audio_url':audio,
+                'description':entry.get('summary','')
+            }
+    return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,latest=latest)
 
 # ---------------- HTML ----------------
 HOME_HTML = """
@@ -329,21 +332,28 @@ PODCAST_DETAIL_HTML = """
 <head><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ title }}</title>
 <style>
-body{font-family:sans-serif;background:#f7f7f7;padding:10px}
-.card{background:#fff;border-radius:8px;padding:10px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,0.1)}
-audio{width:100%;margin-top:5px}
+body { font-family:sans-serif; background:#f7f7f7; padding:10px; text-align:center; }
+.card { background:#fff; border-radius:12px; padding:15px; margin:15px auto; max-width:500px;
+        box-shadow:0 2px 6px rgba(0,0,0,0.15); }
+img.cover { border-radius:12px; width:150px; margin-bottom:10px; }
+audio { width:100%; margin-top:10px; }
+h2 { margin:10px 0; }
+.description { font-size:14px; color:#555; margin-top:10px; }
 </style>
 </head>
 <body>
-<h2>{{ title }}</h2>
-{% if cover %}<img src="{{ cover }}" width="120">{% endif %}
-{% for ep in episodes %}
   <div class="card">
-    <b>{{ ep.title }}</b><br>
-    <small>{{ ep.pub_date }}</small><br>
-    <audio controls src="{{ ep.audio_url }}"></audio>
+    {% if cover %}<img class="cover" src="{{ cover }}">{% endif %}
+    <h2>{{ title }}</h2>
+    {% if latest %}
+      <h3>{{ latest.title }}</h3>
+      <small>{{ latest.pub_date }}</small>
+      <div class="description">{{ latest.description|safe }}</div>
+      <audio controls src="{{ latest.audio_url }}"></audio>
+    {% else %}
+      <p>No episodes found.</p>
+    {% endif %}
   </div>
-{% endfor %}
 </body>
 </html>
 """
