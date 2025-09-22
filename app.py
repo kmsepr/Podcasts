@@ -22,32 +22,44 @@ DEFAULT_FEEDS = [
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Table to store Swalath entries
+    # Table to store Swalath total
     c.execute('''
-        CREATE TABLE IF NOT EXISTS swalath_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            message TEXT
+        CREATE TABLE IF NOT EXISTS swalath_total (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            total INTEGER DEFAULT 0
         )
     ''')
+    c.execute('INSERT OR IGNORE INTO swalath_total (id, total) VALUES (1, 0)')
     conn.commit()
     conn.close()
 init_db()
 
 # ---------------- APIs ----------------
+@app.route('/api/swalath/total')
+def get_total_swalath():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT total FROM swalath_total WHERE id=1')
+    total = c.fetchone()[0]
+    conn.close()
+    return jsonify({'total': total})
+
 @app.route('/api/swalath/add', methods=['POST'])
 def add_swalath():
     data = request.json
-    name = data.get('name', '').strip()
-    message = data.get('message', '').strip()
-    if not name:
-        return jsonify({'error': 'Name required'}), 400
+    number = data.get('number', 0)
+    try:
+        number = int(number)
+    except:
+        return jsonify({'error': 'Invalid number'}), 400
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('INSERT INTO swalath_entries (name, message) VALUES (?, ?)', (name, message))
+    c.execute('UPDATE swalath_total SET total = total + ? WHERE id=1', (number,))
     conn.commit()
+    c.execute('SELECT total FROM swalath_total WHERE id=1')
+    total = c.fetchone()[0]
     conn.close()
-    return jsonify({'message': 'Swalath added successfully'})
+    return jsonify({'total': total})
 
 @app.route('/api/favorites')
 def get_favorites():
@@ -79,7 +91,7 @@ HTML = """
 <title>Podcast & Swalath</title>
 <style>
 body{font-family:sans-serif;font-size:14px;margin:4px}
-button,input,textarea{width:100%;margin:4px 0}
+button,input{width:100%;margin:4px 0;padding:4px}
 .card{border:1px solid #ccc;padding:5px;margin-top:6px}
 .tiny{font-size:11px;color:#666}
 audio{width:100%; margin-top:5px}
@@ -90,29 +102,35 @@ audio{width:100%; margin-top:5px}
 
 <h3>🙏 Add Swalath</h3>
 <div class="card">
-  <input type="text" id="name" placeholder="Your Name">
-  <textarea id="message" placeholder="Your Message (optional)"></textarea>
-  <button onclick="submitSwalath()">➕ Add Swalath</button>
+  <input type="number" id="swalathNumber" placeholder="Enter number" min="1" value="1">
+  <button onclick="submitSwalath()">➕ Add</button>
+  <p>Total Swalath: <span id="swalathTotal">0</span></p>
 </div>
 
 <h3>⭐ Favorites</h3>
 <div id="favResults"></div>
 
 <script>
+// Load current total
+async function loadSwalathTotal(){
+  let r = await fetch('/api/swalath/total');
+  let d = await r.json();
+  document.getElementById('swalathTotal').innerText = d.total;
+}
+
+// Submit number and increment total
 async function submitSwalath(){
-  let name = document.getElementById('name').value;
-  let message = document.getElementById('message').value;
-  if(!name){ Swal.fire({icon:'error',title:'Name required'}); return; }
+  let number = document.getElementById('swalathNumber').value;
   let r = await fetch('/api/swalath/add', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name, message})
+    body: JSON.stringify({number})
   });
   let d = await r.json();
   if(r.ok){
-    Swal.fire({icon:'success',title:'Added!',text:d.message,timer:1500,showConfirmButton:false});
-    document.getElementById('name').value='';
-    document.getElementById('message').value='';
+    document.getElementById('swalathTotal').innerText = d.total;
+    Swal.fire({icon:'success',title:'Added!',text:`Total: ${d.total}`,timer:1200,showConfirmButton:false});
+    document.getElementById('swalathNumber').value = 1;
   } else {
     Swal.fire({icon:'error',title:'Error',text:d.error});
   }
@@ -135,8 +153,10 @@ async function loadFavorites(){
 }
 
 // On page load
+loadSwalathTotal();
 loadFavorites();
 </script>
+
 </body>
 </html>
 """
