@@ -14,6 +14,7 @@ IST = ZoneInfo("Asia/Kolkata")
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_total (
             id INTEGER PRIMARY KEY CHECK(id=1),
@@ -22,7 +23,6 @@ def init_db():
             first_added TEXT
         )
     ''')
-    c.execute('INSERT OR IGNORE INTO swalath_total (id,total,last_added,first_added) VALUES(1,0,NULL,NULL)')
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,14 +30,40 @@ def init_db():
             added_at TEXT
         )
     ''')
+    c.execute('INSERT OR IGNORE INTO swalath_total (id,total,last_added,first_added) VALUES(1,0,NULL,NULL)')
     conn.commit()
     conn.close()
+
 init_db()
 
-# ---------------- Swalath APIs ----------------
-@app.route('/swalath')
-def swalath_page():
-    return render_template_string(SWALATH_HTML)
+# ---------------- Dikr APIs ----------------
+@app.route('/api/swalath/add', methods=['POST'])
+def add_swalath():
+    data = request.json
+    number = data.get('number', 0)
+    try:
+        number = int(number)
+        assert number > 0
+    except:
+        return jsonify({'error': 'Enter positive number'}), 400
+
+    now = datetime.now(IST).strftime("%B %d %Y %H:%M:%S")
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('INSERT INTO swalath_entries (number, added_at) VALUES (?, ?)', (number, now))
+
+    c.execute('SELECT first_added FROM swalath_total WHERE id=1')
+    first_added = c.fetchone()[0]
+    if not first_added:
+        c.execute('UPDATE swalath_total SET first_added=? WHERE id=1', (now,))
+
+    c.execute('UPDATE swalath_total SET total=total+?, last_added=? WHERE id=1', (number, now))
+    conn.commit()
+    c.execute('SELECT total,last_added,first_added FROM swalath_total WHERE id=1')
+    total,last_added,first_added = c.fetchone()
+    conn.close()
+    return jsonify({'total': total, 'last_added': last_added, 'first_added': first_added})
 
 @app.route('/api/swalath/total')
 def get_total_swalath():
@@ -46,245 +72,159 @@ def get_total_swalath():
     c.execute('SELECT total,last_added,first_added FROM swalath_total WHERE id=1')
     total,last_added,first_added = c.fetchone()
     conn.close()
-    return jsonify({'total':total,'last_added':last_added,'first_added':first_added})
-
-@app.route('/api/swalath/add', methods=['POST'])
-def add_swalath():
-    data = request.json
-    number = data.get('number',0)
-    try: 
-        number=int(number)
-        assert number>0
-    except: 
-        return jsonify({'error':'Enter positive number'}),400
-
-    now = datetime.now(IST).strftime("%B %d %Y %H:%M:%S")
-
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('INSERT INTO swalath_entries (number,added_at) VALUES (?,?)',(number,now))
-
-    c.execute('SELECT first_added FROM swalath_total WHERE id=1')
-    first_added = c.fetchone()[0]
-    if not first_added:
-        c.execute('UPDATE swalath_total SET first_added=? WHERE id=1',(now,))
-
-    c.execute('UPDATE swalath_total SET total=total+?,last_added=? WHERE id=1',(number,now))
-    conn.commit()
-    c.execute('SELECT total,last_added,first_added FROM swalath_total WHERE id=1')
-    total,last_added,first_added=c.fetchone()
-    conn.close()
-    return jsonify({'total':total,'last_added':last_added,'first_added':first_added})
+    return jsonify({'total': total, 'last_added': last_added, 'first_added': first_added})
 
 @app.route('/api/swalath/entries')
-def get_swalath_entries():
+def get_entries():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('SELECT id,number,added_at FROM swalath_entries ORDER BY id DESC')
-    rows=[dict(zip(['id','number','added_at'],r)) for r in c.fetchall()]
+    c.execute('SELECT number,added_at FROM swalath_entries ORDER BY id DESC LIMIT 50')
+    rows = c.fetchall()
     conn.close()
-    return jsonify(rows)
+    return jsonify([{'number': n, 'added_at': t} for n,t in rows])
 
-@app.route('/api/swalath/delete/<int:eid>',methods=['POST'])
-def delete_swalath_entry(eid):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT number FROM swalath_entries WHERE id=?',(eid,))
-    r=c.fetchone()
-    if not r: 
-        conn.close()
-        return jsonify({'error':'Entry not found'}),404
-    number=r[0]
-    c.execute('DELETE FROM swalath_entries WHERE id=?',(eid,))
-    c.execute('UPDATE swalath_total SET total=total-? WHERE id=1',(number,))
-    conn.commit(); conn.close()
-    return jsonify({'message':'Deleted'})
+# ---------------- Podcast (latest only) ----------------
+ITUNES_SEARCH = "https://itunes.apple.com/search?term={}&media=podcast&limit=1"
 
-# ---------------- Podcast APIs ----------------
-@app.route('/podcast')
-def podcast_page():
-    return render_template_string(PODCAST_HTML)
-
-@app.route('/api/search_podcasts')
-def search_podcasts():
-    query = request.args.get('query','').strip()
-    if not query: return jsonify({'results':[]})
-    url="https://itunes.apple.com/search"
-    params={'term':query,'media':'podcast','limit':5}
+@app.route('/api/podcast/latest')
+def latest_podcast():
+    # Example: return the first podcast for "Islamic"
+    query = request.args.get("q", "Islamic")
     try:
-        r=requests.get(url,params=params,timeout=10)
-        data=r.json()
-        results=[]
-        for p in data.get('results',[]):
-            results.append({
-                'collectionName':p.get('collectionName'),
-                'artistName':p.get('artistName'),
-                'feedUrl':p.get('feedUrl'),
-                'artworkUrl100':p.get('artworkUrl100'),
-                'description':p.get('collectionExplicitness','')
+        r = requests.get(ITUNES_SEARCH.format(query), timeout=5)
+        data = r.json()
+        if data["resultCount"] > 0:
+            p = data["results"][0]
+            return jsonify({
+                "title": p.get("collectionName"),
+                "description": p.get("artistName"),
+                "feedUrl": p.get("feedUrl"),
+                "artwork": p.get("artworkUrl100")
             })
-        return jsonify({'results':results})
-    except: 
-        return jsonify({'results':[]})
+    except:
+        pass
+    return jsonify({})
 
-@app.route('/api/podcast_feed')
-def podcast_feed():
-    feed_url = request.args.get('feedUrl','').strip()
-    if not feed_url: return jsonify({'episodes':[]})
-    try:
-        feed=feedparser.parse(feed_url)
-        episodes=[]
-        if feed.entries:
-            entry = feed.entries[0]  # only latest
-            audio=''
-            for enc in entry.get('enclosures',[]):
-                if enc.get('href','').startswith('http'): 
-                    audio=enc['href']; break
-            if audio:
-                episodes.append({
-                    'title':entry.get('title',''),
-                    'description':entry.get('summary','') or entry.get('description',''),
-                    'audio_url':audio,
-                    'pub_date':entry.get('published','')
-                })
-        return jsonify({'episodes':episodes})
-    except: 
-        return jsonify({'episodes':[]})
-
-# ---------------- Home ----------------
-HOME_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Home - Dikr & Podcasts</title>
-<style>
-body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
-.container{max-width:600px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:15px}
-.card{background:#fff;padding:30px;border-radius:12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer;font-size:20px;font-weight:bold;color:white}
-.card:hover{box-shadow:0 4px 10px rgba(0,0,0,0.2)}
-.dikr{background:#22c55e;}
-.podcast{background:#f97316;}
-.youtube{background:#dc2626;}
-.news{background:#7c3aed;}
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="card dikr" onclick="location.href='/swalath'">🕌<br>Dikr</div>
-  <div class="card podcast" onclick="location.href='/podcast'">🎙️<br>Podcast</div>
-  <div class="card youtube" onclick="window.open('http://capitalist-anthe-pscj-4a28f285.koyeb.app/','_blank')">📺<br>YouTube Live</div>
-  <div class="card news" onclick="window.open('http://zippy-gretta-pscjunction-b779efe8.koyeb.app/','_blank')">📰<br>Suprabhaatham</div>
-</div>
-</body>
-</html>
-"""
-
-SWALATH_HTML = """
-<!DOCTYPE html>
-<html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Swalath</title>
-<style>
-body{font-family:sans-serif;background:#f7f7f7;margin:0;padding:10px;color:#333}
-.card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
-input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
-button{background:#22c55e;color:white;border:none;cursor:pointer}
-.tiny{font-size:11px;color:#666}
-</style>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-</head>
-<body>
-<h2>🕌 Swalath</h2>
-<div class="card">
-  <input type="number" id="swalathNumber" placeholder="Enter number" min="1">
-  <button onclick="submitSwalath()">➕ Add</button>
-  <p>Total: <span id="swalathTotal">0</span></p>
-  <p>First added: <span id="firstAdded">-</span></p>
-  <p>Last added: <span id="lastAdded">-</span></p>
-</div>
-<div id="swalathEntries"></div>
-<script>
-async function loadSwalathTotal(){
-  let r=await fetch('/api/swalath/total'); let d=await r.json();
-  document.getElementById('swalathTotal').innerText=d.total;
-  document.getElementById('lastAdded').innerText=d.last_added||'-';
-  document.getElementById('firstAdded').innerText=d.first_added||'-';
-  loadEntries();
-}
-async function submitSwalath(){
-  let n=document.getElementById('swalathNumber').value;
-  if(!n){Swal.fire({icon:'error',title:'Enter number'});return;}
-  let r=await fetch('/api/swalath/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:n})});
-  let d=await r.json();
-  if(r.ok){document.getElementById('swalathNumber').value='';loadSwalathTotal();Swal.fire({icon:'success',title:'Added',text:`Total: ${d.total}`,timer:1200,showConfirmButton:false});}
-  else Swal.fire({icon:'error',title:'Error',text:d.error});
-}
-async function loadEntries(){
-  let r=await fetch('/api/swalath/entries'); let d=await r.json();
-  const c=document.getElementById('swalathEntries'); c.innerHTML='';
-  d.forEach(e=>{let div=document.createElement('div');div.className='card';
-    div.innerHTML=`${e.number} 🕰 ${e.added_at} <button onclick="deleteEntry(${e.id})">❌</button>`; c.appendChild(div);
-  });
-}
-async function deleteEntry(id){await fetch('/api/swalath/delete/'+id,{method:'POST'}); loadSwalathTotal();}
-loadSwalathTotal();
-</script>
-</body>
-</html>
-"""
-
-PODCAST_HTML = """
-<!DOCTYPE html>
-<html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Podcasts</title>
-<style>
-body{font-family:sans-serif;background:#f7f7f7;margin:0;padding:10px;color:#333}
-.card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
-input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
-button{background:#f97316;color:white;border:none;cursor:pointer}
-.tiny{font-size:11px;color:#666}
-audio{width:100%;margin-top:5px;border-radius:4px}
-</style>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-</head>
-<body>
-<h2>🎙️ Podcasts</h2>
-<input type="text" id="searchQuery" placeholder="Search podcasts...">
-<button onclick="searchPodcasts()">🔍 Search</button>
-<div id="favResults"></div>
-<script>
-async function searchPodcasts(){
-  const q=document.getElementById('searchQuery').value.trim(); if(!q)return;
-  const r=await fetch('/api/search_podcasts?query='+encodeURIComponent(q));
-  const data=await r.json(); const o=document.getElementById('favResults'); o.innerHTML='';
-  data.results.forEach(p=>{let div=document.createElement('div'); div.className='card';
-    div.innerHTML=`<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br><p>${p.description||''}</p>
-      <button onclick="loadEpisodes('${encodeURIComponent(p.feedUrl)}',this)">📥 Load Latest Episode</button>
-      <div class="episodes"></div>`; o.appendChild(div);
-  });
-}
-async function loadEpisodes(feedUrl,btn){
-  const container=btn.nextElementSibling; container.innerHTML='⏳ Loading...';
-  const r=await fetch('/api/podcast_feed?feedUrl='+feedUrl); const data=await r.json();
-  container.innerHTML='';
-  data.episodes.forEach(ep=>{let div=document.createElement('div'); div.className='card';
-    div.innerHTML=`<b>${ep.title}</b><br><span class='tiny'>${ep.pub_date}</span><br>
-      <p>${ep.description}</p>
-      <audio controls src="${ep.audio_url}"></audio>
-      <a href="${ep.audio_url}" download style="display:block;margin-top:5px">📥 Download</a>`;
-    container.appendChild(div);
-  });
-}
-</script>
-</body>
-</html>
-"""
-
+# ---------------- Pages ----------------
 @app.route('/')
 def home():
-    return render_template_string(HOME_HTML)
+    return render_template_string("""
+    <html>
+    <head>
+      <title>Home</title>
+      <style>
+        body { font-family: sans-serif; padding:20px; }
+        .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:20px; }
+        .card {
+          padding:40px; border-radius:16px; color:white; 
+          font-size:20px; font-weight:bold; text-align:center;
+          display:flex; align-items:center; justify-content:center;
+          flex-direction:column; text-decoration:none;
+        }
+        .dikr { background:#22c55e; }     /* Green */
+        .news { background:#7c3aed; }     /* Violet */
+        .youtube { background:#dc2626; }  /* Red */
+        .podcast { background:#f97316; }  /* Orange */
+      </style>
+    </head>
+    <body>
+      <h1>Dashboard</h1>
+      <div class="grid">
+        <a href="/swalath" class="card dikr">🕌<br>Dikr</a>
+        <a href="http://zippy-gretta-pscjunction-b779efe8.koyeb.app/" target="_blank" class="card news">📰<br>Suprabhaatham</a>
+        <a href="http://capitalist-anthe-pscj-4a28f285.koyeb.app/" target="_blank" class="card youtube">📺<br>YouTube Live</a>
+        <a href="/podcast" class="card podcast" id="latestPodcast">🎙️<br>Podcast</a>
+      </div>
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000)
+      <script>
+        async function loadPodcast(){
+          let r = await fetch('/api/podcast/latest?q=Islamic');
+          let d = await r.json();
+          if(d.title){
+            document.getElementById('latestPodcast').innerHTML = "🎙️<br>"+d.title+"<br><small>"+(d.description||"")+"</small>";
+          }
+        }
+        loadPodcast();
+      </script>
+    </body>
+    </html>
+    """)
+
+@app.route('/swalath')
+def swalath_page():
+    return render_template_string("""
+    <html>
+    <head>
+      <title>Dikr Tracker</title>
+      <style>
+        body { font-family: sans-serif; padding:20px; }
+        input, button { padding:8px; margin:4px; }
+        .btn { background:#22c55e; color:white; border:none; border-radius:8px; }
+      </style>
+    </head>
+    <body>
+      <h1>🕌 Dikr Tracker</h1>
+      <p>Total: <span id="swalathTotal">0</span></p>
+      <p>First added: <span id="firstAdded">-</span></p>
+      <p>Last added: <span id="lastAdded">-</span></p>
+      <input id="number" type="number" placeholder="Enter count">
+      <button onclick="addSwalath()" class="btn">Add</button>
+      <h2>Entries</h2>
+      <ul id="entries"></ul>
+      <script>
+        async function loadSwalathTotal(){
+          let r=await fetch('/api/swalath/total');
+          let d=await r.json();
+          document.getElementById('swalathTotal').innerText=d.total;
+          document.getElementById('lastAdded').innerText=d.last_added||'-';
+          document.getElementById('firstAdded').innerText=d.first_added||'-';
+          loadEntries();
+        }
+        async function loadEntries(){
+          let r=await fetch('/api/swalath/entries');
+          let d=await r.json();
+          let ul=document.getElementById('entries');
+          ul.innerHTML="";
+          d.forEach(e=>{
+            let li=document.createElement('li');
+            li.innerText=e.number+" @ "+e.added_at;
+            ul.appendChild(li);
+          });
+        }
+        async function addSwalath(){
+          let num=document.getElementById('number').value;
+          let r=await fetch('/api/swalath/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:num})});
+          let d=await r.json();
+          loadSwalathTotal();
+        }
+        loadSwalathTotal();
+      </script>
+    </body>
+    </html>
+    """)
+
+@app.route('/podcast')
+def podcast_page():
+    return render_template_string("""
+    <html>
+    <head><title>Podcast</title></head>
+    <body>
+      <h1>🎙️ Latest Podcast</h1>
+      <div id="podcast"></div>
+      <script>
+        async function loadPodcast(){
+          let r=await fetch('/api/podcast/latest?q=Islamic');
+          let d=await r.json();
+          if(d.title){
+            document.getElementById('podcast').innerHTML =
+              "<h2>"+d.title+"</h2><p>"+(d.description||"")+"</p>";
+          }
+        }
+        loadPodcast();
+      </script>
+    </body>
+    </html>
+    """)
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
