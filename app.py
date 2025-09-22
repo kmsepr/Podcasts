@@ -5,13 +5,15 @@ import pytz
 
 app = Flask(__name__)
 
-DB_FILE = '/mnt/data/podcasts.db'
-os.makedirs('/mnt/data', exist_ok=True)
+# ---------------- Persistent DB ----------------
+DB_FILE = 'podcasts.db'  # use local file in project folder for persistence
+os.makedirs(os.path.dirname(DB_FILE) or '.', exist_ok=True)
 
-# ---------------- Database ----------------
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # Swalath total (single row)
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_total (
             id INTEGER PRIMARY KEY CHECK(id=1),
@@ -19,7 +21,10 @@ def init_db():
             last_added TEXT
         )
     ''')
-    c.execute('INSERT OR IGNORE INTO swalath_total (id,total,last_added) VALUES(1,0,NULL)')
+    # Only insert default row if table empty
+    c.execute('INSERT INTO swalath_total (id,total,last_added) SELECT 1,0,NULL WHERE NOT EXISTS (SELECT 1 FROM swalath_total)')
+    
+    # Swalath entries
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +32,8 @@ def init_db():
             added_at TEXT
         )
     ''')
+    
+    # Podcasts
     c.execute('''
         CREATE TABLE IF NOT EXISTS podcasts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,10 +42,13 @@ def init_db():
             cover TEXT
         )
     ''')
+    
     conn.commit()
     conn.close()
+
 init_db()
 
+# ---------------- Helpers ----------------
 def get_podcasts():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -156,207 +166,7 @@ def podcast_detail(pid):
     return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,latest=latest)
 
 # ---------------- HTML ----------------
-HOME_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Home</title>
-<style>
-body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
-.container{max-width:600px;margin:0 auto;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.card{background:#fff;padding:30px;border-radius:12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer;font-size:18px;font-weight:bold}
-.card:hover{box-shadow:0 4px 10px rgba(0,0,0,0.2)}
-.green{background:#4CAF50;color:white}
-.orange{background:#f97316;color:white}
-.violet{background:#7c3aed;color:white}
-.red{background:#dc2626;color:white}
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="card green" onclick="location.href='/swalath'">🙏 Dikr</div>
-  <div class="card violet" onclick="window.open('http://zippy-gretta-pscjunction-b779efe8.koyeb.app/','_blank')">📰 Suprabhatam</div>
-  <div class="card red" onclick="window.open('http://capitalist-anthe-pscj-4a28f285.koyeb.app/','_blank')">📺 YouTube Live</div>
-  <div class="card orange" onclick="location.href='/podcast'">🎙️ Podcasts</div>
-</div>
-</body>
-</html>
-"""
-
-SWALATH_HTML = """
-<!DOCTYPE html>
-<html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Swalath</title>
-<style>
-body{font-family:sans-serif;background:#f7f7f7;margin:0;padding:10px;color:#333}
-.card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
-input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
-button{background:#4CAF50;color:white;border:none;cursor:pointer}
-</style>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-</head>
-<body>
-<h2>📿 Swalath</h2>
-<div class="card">
-  <input type="number" id="swalathNumber" placeholder="Enter number" min="1">
-  <button onclick="submitSwalath()">➕ Add</button>
-  <p>Total: <span id="swalathTotal">0</span></p>
-  <p>Last added: <span id="lastAdded">-</span></p>
-</div>
-<div id="swalathEntries"></div>
-<script>
-async function loadSwalathTotal(){
-  let r=await fetch('/api/swalath/total'); let d=await r.json();
-  document.getElementById('swalathTotal').innerText=d.total;
-  document.getElementById('lastAdded').innerText=d.last_added||'-';
-  loadEntries();
-}
-async function submitSwalath(){
-  let n=document.getElementById('swalathNumber').value;
-  if(!n){Swal.fire({icon:'error',title:'Enter number'});return;}
-  let r=await fetch('/api/swalath/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:n})});
-  let d=await r.json();
-  if(r.ok){document.getElementById('swalathNumber').value='';loadSwalathTotal();}
-  else Swal.fire({icon:'error',title:'Error',text:d.error});
-}
-async function loadEntries(){
-  let r=await fetch('/api/swalath/entries'); let d=await r.json();
-  const c=document.getElementById('swalathEntries'); c.innerHTML='';
-  d.forEach(e=>{let div=document.createElement('div');div.className='card';
-    div.innerHTML=`${e.number} 🕰 ${e.added_at} <button onclick="deleteEntry(${e.id})">❌</button>`; c.appendChild(div);
-  });
-}
-async function deleteEntry(id){await fetch('/api/swalath/delete/'+id,{method:'POST'}); loadSwalathTotal();}
-loadSwalathTotal();
-</script>
-</body>
-</html>
-"""
-
-PODCAST_GRID_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Podcasts</title>
-  <style>
-    body { font-family: sans-serif; padding:20px; background:#f8f9fa; }
-    .grid { display:grid; gap:20px; }
-    .card {
-      border-radius:16px; padding:20px;
-      color:white; font-size:20px; text-align:center;
-      background:#f97316;
-    }
-    .searchbox { margin-top:20px; }
-    .results, .saved { margin-top:20px; }
-    .saved-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 15px;
-    }
-    .saved-item {
-      background:white; color:black;
-      border-radius:12px; padding:10px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.1);
-      text-align:center;
-    }
-    .saved-item img { border-radius:8px; max-width:100px; margin-bottom:8px; }
-    .saved-item b { display:block; font-size:14px; margin-bottom:6px; }
-    .saved-item button { margin-top:6px; }
-    .podcast {
-      background:white; color:black;
-      border-radius:12px; padding:10px; margin:10px 0;
-      box-shadow:0 2px 6px rgba(0,0,0,0.1);
-    }
-    .podcast img { border-radius:8px; float:left; margin-right:10px; }
-    .podcast b { font-size:16px; }
-    .podcast small { color:#555; display:block; margin-top:4px; }
-    .podcast button { margin-top:6px; }
-    .clear { clear:both; }
-  </style>
-</head>
-<body>
-  <div class="grid">
-    <div class="card">🎙️ Podcasts</div>
-  </div>
-
-  <div class="searchbox">
-    <form method="get" action="/podcast">
-      <input type="text" name="q" placeholder="Search podcasts..." value="{{ request.args.get('q','') }}">
-      <button type="submit">Search</button>
-    </form>
-  </div>
-
-  {% if results %}
-    <div class="results">
-      <h3>Search Results</h3>
-      {% for r in results %}
-        <div class="podcast">
-          <img src="{{ r.cover }}" width="80">
-          <b>{{ r.title }}</b>
-          <small>{{ r.description }}</small>
-          <form method="post" action="/podcast">
-            <input type="hidden" name="title" value="{{ r.title }}">
-            <input type="hidden" name="rss" value="{{ r.rss }}">
-            <input type="hidden" name="cover" value="{{ r.cover }}">
-            <button type="submit">Add</button>
-          </form>
-          <div class="clear"></div>
-        </div>
-      {% endfor %}
-    </div>
-  {% endif %}
-
-  {% if saved %}
-    <div class="saved">
-      <h3>Saved Podcasts</h3>
-      <div class="saved-grid">
-        {% for pid, title, rss, cover in saved %}
-          <div class="saved-item">
-            {% if cover %}<img src="{{ cover }}">{% endif %}
-            <b>{{ title }}</b>
-            <a href="/podcast/{{ pid }}"><button>Open</button></a>
-          </div>
-        {% endfor %}
-      </div>
-    </div>
-  {% endif %}
-</body>
-</html>
-"""
-
-PODCAST_DETAIL_HTML = """
-<!DOCTYPE html>
-<html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{ title }}</title>
-<style>
-body { font-family:sans-serif; background:#f7f7f7; padding:10px; text-align:center; }
-.card { background:#fff; border-radius:12px; padding:15px; margin:15px auto; max-width:500px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.15); }
-img.cover { border-radius:12px; width:150px; margin-bottom:10px; }
-audio { width:100%; margin-top:10px; }
-h2 { margin:10px 0; }
-.description { font-size:14px; color:#555; margin-top:10px; }
-</style>
-</head>
-<body>
-  <div class="card">
-    {% if cover %}<img class="cover" src="{{ cover }}">{% endif %}
-    <h2>{{ title }}</h2>
-    {% if latest %}
-      <h3>{{ latest.title }}</h3>
-      <small>{{ latest.pub_date }}</small>
-      <div class="description">{{ latest.description|safe }}</div>
-      <audio controls src="{{ latest.audio_url }}"></audio>
-    {% else %}
-      <p>No episodes found.</p>
-    {% endif %}
-  </div>
-</body>
-</html>
-"""
+# [Use your existing HOME_HTML, SWALATH_HTML, PODCAST_GRID_HTML, PODCAST_DETAIL_HTML here]
 
 @app.route('/')
 def home():
