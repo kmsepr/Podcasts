@@ -168,11 +168,6 @@ body{
     text-align:center;
     padding:10px;
 }
-.card img{
-    width:60px;
-    height:60px;
-    margin-bottom:10px;
-}
 .card:hover{
     transform:scale(1.05);
     box-shadow:0 8px 20px rgba(0,0,0,0.3);
@@ -192,29 +187,21 @@ body{
         height:180px;
         font-size:20px;
     }
-    .card img{
-        width:50px;
-        height:50px;
-    }
 }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="card dikr" onclick="location.href='/swalath'">
-    <img src="https://img.icons8.com/ios-filled/50/prayer-mat.png"/>
     📿 Dikr / Swalath
   </div>
   <div class="card podcast" onclick="location.href='/podcasts'">
-    <img src="https://img.icons8.com/ios-filled/50/podcast.png"/>
     🎧 Podcasts
   </div>
   <div class="card youtube" onclick="location.href='http://capitalist-anthe-pscj-4a28f285.koyeb.app/'">
-    <img src="https://img.icons8.com/ios-filled/50/youtube-live.png"/>
     ▶️ YouTube Live
   </div>
   <div class="card newspaper" onclick="location.href='http://zippy-gretta-pscjunction-b779efe8.koyeb.app/'">
-    <img src="https://img.icons8.com/ios-filled/50/newspaper.png"/>
     📰 Suprabhatham Newspaper
   </div>
 </div>
