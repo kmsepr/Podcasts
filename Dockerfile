@@ -16,5 +16,8 @@ VOLUME ["/mnt/data"]
 # Set environment variable to avoid buffering logs
 ENV PYTHONUNBUFFERED=1
 
-# Default command
+# Expose port (Koyeb/Heroku will map $PORT to this)
+EXPOSE 5000
+
+# Default command (Flask must listen on 0.0.0.0 and $PORT)
 CMD ["python", "app.py"]
