@@ -1,11 +1,14 @@
 from flask import Flask, jsonify, render_template_string, request
 import sqlite3, os, requests, feedparser
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
+
+IST = ZoneInfo("Asia/Kolkata")
 
 # ---------------- Database ----------------
 def init_db():
@@ -15,10 +18,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS swalath_total (
             id INTEGER PRIMARY KEY CHECK(id=1),
             total INTEGER DEFAULT 0,
-            last_added TEXT
+            last_added TEXT,
+            first_added TEXT
         )
     ''')
-    c.execute('INSERT OR IGNORE INTO swalath_total (id,total,last_added) VALUES(1,0,NULL)')
+    c.execute('INSERT OR IGNORE INTO swalath_total (id,total,last_added,first_added) VALUES(1,0,NULL,NULL)')
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,33 +43,39 @@ def swalath_page():
 def get_total_swalath():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('SELECT total,last_added FROM swalath_total WHERE id=1')
-    total,last_added = c.fetchone()
+    c.execute('SELECT total,last_added,first_added FROM swalath_total WHERE id=1')
+    total,last_added,first_added = c.fetchone()
     conn.close()
-    return jsonify({'total':total,'last_added':last_added})
+    return jsonify({'total':total,'last_added':last_added,'first_added':first_added})
 
 @app.route('/api/swalath/add', methods=['POST'])
 def add_swalath():
     data = request.json
-    number = data.get('number', 0)
-    try:
-        number = int(number)
-        assert number > 0
-    except:
-        return jsonify({'error': 'Enter positive number'}), 400
+    number = data.get('number',0)
+    try: 
+        number=int(number)
+        assert number>0
+    except: 
+        return jsonify({'error':'Enter positive number'}),400
 
-    # ✅ Use readable format
-    now = datetime.now().strftime("%B %d %Y %H:%M:%S")
+    now = datetime.now(IST).strftime("%B %d %Y %H:%M:%S")
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('INSERT INTO swalath_entries (number, added_at) VALUES (?, ?)', (number, now))
-    c.execute('UPDATE swalath_total SET total = total + ?, last_added = ? WHERE id = 1', (number, now))
+    c.execute('INSERT INTO swalath_entries (number,added_at) VALUES (?,?)',(number,now))
+
+    c.execute('SELECT first_added FROM swalath_total WHERE id=1')
+    first_added = c.fetchone()[0]
+    if not first_added:
+        c.execute('UPDATE swalath_total SET first_added=? WHERE id=1',(now,))
+
+    c.execute('UPDATE swalath_total SET total=total+?,last_added=? WHERE id=1',(number,now))
     conn.commit()
-    c.execute('SELECT total, last_added FROM swalath_total WHERE id = 1')
-    total, last_added = c.fetchone()
+    c.execute('SELECT total,last_added,first_added FROM swalath_total WHERE id=1')
+    total,last_added,first_added=c.fetchone()
     conn.close()
-    return jsonify({'total': total, 'last_added': last_added})
+    return jsonify({'total':total,'last_added':last_added,'first_added':first_added})
+
 @app.route('/api/swalath/entries')
 def get_swalath_entries():
     conn = sqlite3.connect(DB_FILE)
@@ -81,7 +91,9 @@ def delete_swalath_entry(eid):
     c = conn.cursor()
     c.execute('SELECT number FROM swalath_entries WHERE id=?',(eid,))
     r=c.fetchone()
-    if not r: conn.close(); return jsonify({'error':'Entry not found'}),404
+    if not r: 
+        conn.close()
+        return jsonify({'error':'Entry not found'}),404
     number=r[0]
     c.execute('DELETE FROM swalath_entries WHERE id=?',(eid,))
     c.execute('UPDATE swalath_total SET total=total-? WHERE id=1',(number,))
@@ -89,7 +101,7 @@ def delete_swalath_entry(eid):
     return jsonify({'message':'Deleted'})
 
 # ---------------- Podcast APIs ----------------
-@app.route('/podcasts')
+@app.route('/podcast')
 def podcast_page():
     return render_template_string(PODCAST_HTML)
 
@@ -108,10 +120,12 @@ def search_podcasts():
                 'collectionName':p.get('collectionName'),
                 'artistName':p.get('artistName'),
                 'feedUrl':p.get('feedUrl'),
-                'artworkUrl100':p.get('artworkUrl100')
+                'artworkUrl100':p.get('artworkUrl100'),
+                'description':p.get('collectionExplicitness','')
             })
         return jsonify({'results':results})
-    except: return jsonify({'results':[]})
+    except: 
+        return jsonify({'results':[]})
 
 @app.route('/api/podcast_feed')
 def podcast_feed():
@@ -120,19 +134,22 @@ def podcast_feed():
     try:
         feed=feedparser.parse(feed_url)
         episodes=[]
-        for entry in feed.entries[:10]:
+        if feed.entries:
+            entry = feed.entries[0]  # only latest
             audio=''
             for enc in entry.get('enclosures',[]):
-                if enc.get('href','').startswith('http'): audio=enc['href']; break
-            if not audio: continue
-            episodes.append({
-                'title':entry.get('title',''),
-                'description':entry.get('summary','') or entry.get('description',''),
-                'audio_url':audio,
-                'pub_date':entry.get('published','')
-            })
+                if enc.get('href','').startswith('http'): 
+                    audio=enc['href']; break
+            if audio:
+                episodes.append({
+                    'title':entry.get('title',''),
+                    'description':entry.get('summary','') or entry.get('description',''),
+                    'audio_url':audio,
+                    'pub_date':entry.get('published','')
+                })
         return jsonify({'episodes':episodes})
-    except: return jsonify({'episodes':[]})
+    except: 
+        return jsonify({'episodes':[]})
 
 # ---------------- Home ----------------
 HOME_HTML = """
@@ -143,15 +160,21 @@ HOME_HTML = """
 <title>Home - Dikr & Podcasts</title>
 <style>
 body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
-.container{max-width:500px;margin:0 auto;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.card{background:#fff;padding:20px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer}
+.container{max-width:600px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:15px}
+.card{background:#fff;padding:30px;border-radius:12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer;font-size:20px;font-weight:bold;color:white}
 .card:hover{box-shadow:0 4px 10px rgba(0,0,0,0.2)}
+.dikr{background:#22c55e;}
+.podcast{background:#f97316;}
+.youtube{background:#dc2626;}
+.news{background:#7c3aed;}
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="card" onclick="location.href='/swalath'">🙏 Dikr / Swalath</div>
-  <div class="card" onclick="location.href='/podcasts'">🎧 Podcasts</div>
+  <div class="card dikr" onclick="location.href='/swalath'">🕌<br>Dikr</div>
+  <div class="card podcast" onclick="location.href='/podcast'">🎙️<br>Podcast</div>
+  <div class="card youtube" onclick="window.open('http://capitalist-anthe-pscj-4a28f285.koyeb.app/','_blank')">📺<br>YouTube Live</div>
+  <div class="card news" onclick="window.open('http://zippy-gretta-pscjunction-b779efe8.koyeb.app/','_blank')">📰<br>Suprabhaatham</div>
 </div>
 </body>
 </html>
@@ -166,17 +189,18 @@ SWALATH_HTML = """
 body{font-family:sans-serif;background:#f7f7f7;margin:0;padding:10px;color:#333}
 .card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
 input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
-button{background:#4CAF50;color:white;border:none;cursor:pointer}
+button{background:#22c55e;color:white;border:none;cursor:pointer}
 .tiny{font-size:11px;color:#666}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
-<h2>🙏 Swalath</h2>
+<h2>🕌 Swalath</h2>
 <div class="card">
   <input type="number" id="swalathNumber" placeholder="Enter number" min="1">
   <button onclick="submitSwalath()">➕ Add</button>
   <p>Total: <span id="swalathTotal">0</span></p>
+  <p>First added: <span id="firstAdded">-</span></p>
   <p>Last added: <span id="lastAdded">-</span></p>
 </div>
 <div id="swalathEntries"></div>
@@ -185,6 +209,7 @@ async function loadSwalathTotal(){
   let r=await fetch('/api/swalath/total'); let d=await r.json();
   document.getElementById('swalathTotal').innerText=d.total;
   document.getElementById('lastAdded').innerText=d.last_added||'-';
+  document.getElementById('firstAdded').innerText=d.first_added||'-';
   loadEntries();
 }
 async function submitSwalath(){
@@ -218,14 +243,14 @@ PODCAST_HTML = """
 body{font-family:sans-serif;background:#f7f7f7;margin:0;padding:10px;color:#333}
 .card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
 input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
-button{background:#4CAF50;color:white;border:none;cursor:pointer}
+button{background:#f97316;color:white;border:none;cursor:pointer}
 .tiny{font-size:11px;color:#666}
 audio{width:100%;margin-top:5px;border-radius:4px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
-<h2>🎧 Podcasts</h2>
+<h2>🎙️ Podcasts</h2>
 <input type="text" id="searchQuery" placeholder="Search podcasts...">
 <button onclick="searchPodcasts()">🔍 Search</button>
 <div id="favResults"></div>
@@ -235,8 +260,8 @@ async function searchPodcasts(){
   const r=await fetch('/api/search_podcasts?query='+encodeURIComponent(q));
   const data=await r.json(); const o=document.getElementById('favResults'); o.innerHTML='';
   data.results.forEach(p=>{let div=document.createElement('div'); div.className='card';
-    div.innerHTML=`<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br>
-      <button onclick="loadEpisodes('${encodeURIComponent(p.feedUrl)}',this)">📥 Load Episodes</button>
+    div.innerHTML=`<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br><p>${p.description||''}</p>
+      <button onclick="loadEpisodes('${encodeURIComponent(p.feedUrl)}',this)">📥 Load Latest Episode</button>
       <div class="episodes"></div>`; o.appendChild(div);
   });
 }
