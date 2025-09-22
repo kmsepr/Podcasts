@@ -203,28 +203,77 @@ def swalath_page():
     </html>
     """)
 
-@app.route('/podcast')
-def podcast_page():
-    return render_template_string("""
-    <html>
-    <head><title>Podcast</title></head>
-    <body>
-      <h1>🎙️ Latest Podcast</h1>
-      <div id="podcast"></div>
-      <script>
-        async function loadPodcast(){
-          let r=await fetch('/api/podcast/latest?q=Islamic');
-          let d=await r.json();
-          if(d.title){
-            document.getElementById('podcast').innerHTML =
-              "<h2>"+d.title+"</h2><p>"+(d.description||"")+"</p>";
-          }
-        }
-        loadPodcast();
-      </script>
-    </body>
-    </html>
-    """)
+@app.route("/podcast")
+def podcast_search():
+    query = request.args.get("q")
+    results = []
+    if query:
+        url = f"https://itunes.apple.com/search?media=podcast&term={query}"
+        r = requests.get(url).json()
+        for item in r.get("results", []):
+            results.append({
+                "title": item.get("collectionName"),
+                "rss": item.get("feedUrl"),
+                "cover": item.get("artworkUrl100"),
+                "description": item.get("collectionName", "")
+            })
+    saved = get_podcasts()
+    return render_template_string(PODCAST_SEARCH_HTML, results=results, saved=saved)
+
+
+PODCAST_SEARCH_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Podcasts</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f8f9fa; }
+    h2 { margin-bottom: 10px; }
+    .podcast { border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin: 10px 0; background: white; }
+    img { border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Search Podcasts</h2>
+  <form method="get" action="/podcast">
+    <input type="text" name="q" placeholder="Search..." value="{{ request.args.get('q','') }}">
+    <button type="submit">Search</button>
+  </form>
+
+  {% if results %}
+    <h3>Search Results</h3>
+    {% for r in results %}
+      <div class="podcast">
+        <img src="{{ r.cover }}" width="80" align="left" style="margin-right:10px;">
+        <b>{{ r.title }}</b><br>
+        <small>{{ r.description }}</small><br>
+        <form method="post" action="/podcast/add">
+          <input type="hidden" name="title" value="{{ r.title }}">
+          <input type="hidden" name="rss" value="{{ r.rss }}">
+          <input type="hidden" name="cover" value="{{ r.cover }}">
+          <button type="submit">Add</button>
+        </form>
+        <div style="clear:both"></div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if saved %}
+    <h3>Saved Podcasts</h3>
+    <ul>
+    {% for pid, title, rss, cover in saved %}
+      <li>
+        <a href="/podcast/{{ pid }}">
+          {% if cover %}<img src="{{ cover }}" width="50">{% endif %}
+          {{ title }}
+        </a>
+      </li>
+    {% endfor %}
+    </ul>
+  {% endif %}
+</body>
+</html>
+"""
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
