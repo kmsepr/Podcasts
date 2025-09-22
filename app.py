@@ -68,7 +68,7 @@ body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
 </head>
 <body>
 <div class="container">
-  <div class="card green" onclick="location.href='/swalath'">🙏 Dikr</div>
+  <div class="card green" onclick="location.href='/swalath'">📿 Dikr</div>
   <div class="card violet" onclick="window.open('http://zippy-gretta-pscjunction-b779efe8.koyeb.app/','_blank')">📰 Suprabhatam</div>
   <div class="card red" onclick="window.open('http://capitalist-anthe-pscj-4a28f285.koyeb.app/','_blank')">📺 YouTube Live</div>
   <div class="card orange" onclick="location.href='/podcast'">🎙️ Podcasts</div>
