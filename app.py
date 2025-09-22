@@ -12,7 +12,7 @@ os.makedirs(os.path.dirname(DB_FILE) or '.', exist_ok=True)
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
+
     # Swalath total (single row)
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_total (
@@ -21,9 +21,8 @@ def init_db():
             last_added TEXT
         )
     ''')
-    # Only insert default row if table empty
     c.execute('INSERT INTO swalath_total (id,total,last_added) SELECT 1,0,NULL WHERE NOT EXISTS (SELECT 1 FROM swalath_total)')
-    
+
     # Swalath entries
     c.execute('''
         CREATE TABLE IF NOT EXISTS swalath_entries (
@@ -32,7 +31,7 @@ def init_db():
             added_at TEXT
         )
     ''')
-    
+
     # Podcasts
     c.execute('''
         CREATE TABLE IF NOT EXISTS podcasts (
@@ -42,13 +41,13 @@ def init_db():
             cover TEXT
         )
     ''')
-    
+
     conn.commit()
     conn.close()
 
 init_db()
 
-# ---------------- HTML ----------------
+# ---------------- HTML Templates ----------------
 HOME_HTML = """
 <!DOCTYPE html>
 <html>
@@ -57,8 +56,8 @@ HOME_HTML = """
 <title>Home</title>
 <style>
 body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
-.container{max-width:600px;margin:0 auto;padding:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.card{background:#fff;padding:30px;border-radius:12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer;font-size:18px;font-weight:bold}
+.container{max-width:500px;margin:0 auto;padding:10px;display:grid;grid-template-columns:1fr;gap:12px}
+.card{background:#fff;padding:20px;border-radius:12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer;font-size:20px;font-weight:bold}
 .card:hover{box-shadow:0 4px 10px rgba(0,0,0,0.2)}
 .green{background:#4CAF50;color:white}
 .orange{background:#f97316;color:white}
@@ -80,18 +79,20 @@ body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
 SWALATH_HTML = """
 <!DOCTYPE html>
 <html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Swalath</title>
 <style>
 body{font-family:sans-serif;background:#f7f7f7;margin:0;padding:10px;color:#333}
-.card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
-input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
-button{background:#4CAF50;color:white;border:none;cursor:pointer}
+.card{background:#fff;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:15px;margin-top:10px}
+input,button{width:100%;padding:12px;margin:8px 0;border-radius:6px;border:1px solid #ccc;box-sizing:border-box;font-size:18px}
+button{background:#4CAF50;color:white;border:none;cursor:pointer;font-weight:bold}
+button:hover{opacity:0.9}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
-<h2>📿 Swalath</h2>
+<h2 style="text-align:center;">📿 Swalath</h2>
 <div class="card">
   <input type="number" id="swalathNumber" placeholder="Enter number" min="1">
   <button onclick="submitSwalath()">➕ Add</button>
@@ -118,7 +119,7 @@ async function loadEntries(){
   let r=await fetch('/api/swalath/entries'); let d=await r.json();
   const c=document.getElementById('swalathEntries'); c.innerHTML='';
   d.forEach(e=>{let div=document.createElement('div');div.className='card';
-    div.innerHTML=`${e.number} 🕰 ${e.added_at} <button onclick="deleteEntry(${e.id})">❌</button>`; c.appendChild(div);
+    div.innerHTML=`${e.number} 🕰 ${e.added_at} <button style="margin-top:6px;padding:6px 10px;font-size:16px;" onclick="deleteEntry(${e.id})">❌</button>`; c.appendChild(div);
   });
 }
 async function deleteEntry(id){await fetch('/api/swalath/delete/'+id,{method:'POST'}); loadSwalathTotal();}
@@ -132,72 +133,72 @@ PODCAST_GRID_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Podcasts</title>
-  <style>
-    body { font-family: sans-serif; padding:20px; background:#f8f9fa; }
-    .grid { display:grid; gap:20px; }
-    .card { border-radius:16px; padding:20px; color:white; font-size:20px; text-align:center; background:#f97316; }
-    .searchbox { margin-top:20px; }
-    .results, .saved { margin-top:20px; }
-    .saved-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }
-    .saved-item { background:white; color:black; border-radius:12px; padding:10px; box-shadow:0 2px 6px rgba(0,0,0,0.1); text-align:center; }
-    .saved-item img { border-radius:8px; max-width:100px; margin-bottom:8px; }
-    .saved-item b { display:block; font-size:14px; margin-bottom:6px; }
-    .saved-item button { margin-top:6px; }
-    .podcast { background:white; color:black; border-radius:12px; padding:10px; margin:10px 0; box-shadow:0 2px 6px rgba(0,0,0,0.1); }
-    .podcast img { border-radius:8px; float:left; margin-right:10px; }
-    .podcast b { font-size:16px; }
-    .podcast small { color:#555; display:block; margin-top:4px; }
-    .podcast button { margin-top:6px; }
-    .clear { clear:both; }
-  </style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Podcasts</title>
+<style>
+body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
+.grid{display:grid;gap:12px;}
+.card{border-radius:12px;padding:20px;color:white;text-align:center;font-size:18px;background:#f97316;}
+.searchbox input, .searchbox button{width:100%;padding:10px;margin:6px 0;font-size:18px;border-radius:6px;box-sizing:border-box;}
+.saved-grid{display:grid;grid-template-columns:1fr;gap:10px;}
+.saved-item{background:white;color:black;border-radius:12px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,0.1);text-align:center;}
+.saved-item img{border-radius:8px;max-width:100px;margin-bottom:8px;}
+.saved-item b{display:block;font-size:16px;margin-bottom:6px;}
+.saved-item button{width:100%;padding:10px;font-size:16px;margin-top:6px;}
+.podcast{background:white;color:black;border-radius:12px;padding:12px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,0.1);}
+.podcast img{border-radius:8px;float:left;margin-right:10px;width:70px;}
+.podcast b{font-size:16px;}
+.podcast small{color:#555;display:block;margin-top:4px;}
+.podcast button{margin-top:6px;padding:6px 10px;font-size:16px;}
+.clear{clear:both;}
+</style>
 </head>
 <body>
-  <div class="grid">
-    <div class="card">🎙️ Podcasts</div>
-  </div>
+<div class="grid">
+  <div class="card">🎙️ Podcasts</div>
+</div>
 
-  <div class="searchbox">
-    <form method="get" action="/podcast">
-      <input type="text" name="q" placeholder="Search podcasts..." value="{{ request.args.get('q','') }}">
-      <button type="submit">Search</button>
-    </form>
-  </div>
+<div class="searchbox">
+  <form method="get" action="/podcast">
+    <input type="text" name="q" placeholder="Search podcasts..." value="{{ request.args.get('q','') }}">
+    <button type="submit">Search</button>
+  </form>
+</div>
 
-  {% if results %}
-    <div class="results">
-      <h3>Search Results</h3>
-      {% for r in results %}
-        <div class="podcast">
-          <img src="{{ r.cover }}" width="80">
-          <b>{{ r.title }}</b>
-          <small>{{ r.description }}</small>
-          <form method="post" action="/podcast">
-            <input type="hidden" name="title" value="{{ r.title }}">
-            <input type="hidden" name="rss" value="{{ r.rss }}">
-            <input type="hidden" name="cover" value="{{ r.cover }}">
-            <button type="submit">Add</button>
-          </form>
-          <div class="clear"></div>
-        </div>
-      {% endfor %}
+{% if results %}
+<div class="results">
+  <h3>Search Results</h3>
+  {% for r in results %}
+    <div class="podcast">
+      <img src="{{ r.cover }}">
+      <b>{{ r.title }}</b>
+      <small>{{ r.description }}</small>
+      <form method="post" action="/podcast">
+        <input type="hidden" name="title" value="{{ r.title }}">
+        <input type="hidden" name="rss" value="{{ r.rss }}">
+        <input type="hidden" name="cover" value="{{ r.cover }}">
+        <button type="submit">Add</button>
+      </form>
+      <div class="clear"></div>
     </div>
-  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
 
-  {% if saved %}
-    <div class="saved">
-      <h3>Saved Podcasts</h3>
-      <div class="saved-grid">
-        {% for pid, title, rss, cover in saved %}
-          <div class="saved-item">
-            {% if cover %}<img src="{{ cover }}">{% endif %}
-            <b>{{ title }}</b>
-            <a href="/podcast/{{ pid }}"><button>Open</button></a>
-          </div>
-        {% endfor %}
+{% if saved %}
+<div class="saved">
+  <h3>Saved Podcasts</h3>
+  <div class="saved-grid">
+    {% for pid, title, rss, cover in saved %}
+      <div class="saved-item">
+        {% if cover %}<img src="{{ cover }}">{% endif %}
+        <b>{{ title }}</b>
+        <a href="/podcast/{{ pid }}"><button>Open</button></a>
       </div>
-    </div>
-  {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 </body>
 </html>
 """
@@ -205,30 +206,33 @@ PODCAST_GRID_HTML = """
 PODCAST_DETAIL_HTML = """
 <!DOCTYPE html>
 <html>
-<head><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ title }}</title>
 <style>
-body { font-family:sans-serif; background:#f7f7f7; padding:10px; text-align:center; }
-.card { background:#fff; border-radius:12px; padding:15px; margin:15px auto; max-width:500px; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
-img.cover { border-radius:12px; width:150px; margin-bottom:10px; }
-audio { width:100%; margin-top:10px; }
-h2 { margin:10px 0; }
-.description { font-size:14px; color:#555; margin-top:10px; }
+body{font-family:sans-serif;background:#f7f7f7;padding:10px;text-align:center;}
+.card{background:#fff;border-radius:12px;padding:15px;margin:15px auto;max-width:400px;box-shadow:0 2px 6px rgba(0,0,0,0.15);}
+img.cover{border-radius:12px;width:120px;margin-bottom:10px;}
+audio{width:100%;margin-top:10px;}
+h2{margin:10px 0;font-size:20px;}
+h3{font-size:18px;margin:6px 0;}
+.description{font-size:14px;color:#555;margin-top:8px;}
+button{padding:10px 12px;font-size:16px;border-radius:6px;margin-top:6px;}
 </style>
 </head>
 <body>
-  <div class="card">
-    {% if cover %}<img class="cover" src="{{ cover }}">{% endif %}
-    <h2>{{ title }}</h2>
-    {% if latest %}
-      <h3>{{ latest.title }}</h3>
-      <small>{{ latest.pub_date }}</small>
-      <div class="description">{{ latest.description|safe }}</div>
-      <audio controls src="{{ latest.audio_url }}"></audio>
-    {% else %}
-      <p>No episodes found.</p>
-    {% endif %}
-  </div>
+<div class="card">
+  {% if cover %}<img class="cover" src="{{ cover }}">{% endif %}
+  <h2>{{ title }}</h2>
+  {% if latest %}
+    <h3>{{ latest.title }}</h3>
+    <small>{{ latest.pub_date }}</small>
+    <div class="description">{{ latest.description|safe }}</div>
+    <audio controls src="{{ latest.audio_url }}"></audio>
+  {% else %}
+    <p>No episodes found.</p>
+  {% endif %}
+</div>
 </body>
 </html>
 """
@@ -336,7 +340,7 @@ def podcast_detail(pid):
     feed=feedparser.parse(rss)
     latest=None
     if feed.entries:
-        entry=feed.entries[0]  # only latest
+        entry=feed.entries[0]
         audio=''
         for enc in entry.get('enclosures',[]):
             if enc.get('href','').startswith('http'):
