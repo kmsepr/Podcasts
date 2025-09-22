@@ -93,13 +93,21 @@ HTML = """
 <style>
 body{font-family:sans-serif;font-size:14px;margin:0;padding:0;background:#f7f7f7;color:#333}
 .container{max-width:400px;margin:0 auto;padding:10px}
-h3{margin-top:20px;color:#444}
+h3{margin-top:0;color:#444}
 .card{background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:10px;margin-top:10px}
 input,button{width:100%;padding:8px;margin:6px 0;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
 button{background:#4CAF50;color:white;border:none;cursor:pointer;font-size:14px}
 button:hover{background:#45a049}
 .tiny{font-size:11px;color:#666}
 audio{width:100%;margin-top:5px;border-radius:4px}
+
+/* Tabs */
+.tab {overflow: hidden;border-bottom: 1px solid #ccc;margin-top:10px;}
+.tab button {background-color: inherit;float: left;border: none;outline: none;padding: 10px 16px;cursor: pointer;font-size: 14px;}
+.tab button:hover {background-color: #ddd;}
+.tab button.active {background-color: #4CAF50;color:white;}
+.tabcontent {display: none;animation: fadeEffect 0.3s;}
+@keyframes fadeEffect {from {opacity: 0;} to {opacity: 1;}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
@@ -107,20 +115,39 @@ audio{width:100%;margin-top:5px;border-radius:4px}
 
 <div class="container">
 
-  <h3>📿 Add Swalath</h3>
-  <div class="card">
-    <input type="number" id="swalathNumber" placeholder="Enter number of Swalath" min="1">
-    <button onclick="submitSwalath()">➕ Add</button>
-    <p>Total Swalath: <span id="swalathTotal">0</span></p>
+  <div class="tab">
+    <button class="tablinks active" onclick="openTab(event,'Swalath')">📿 Add Swalath</button>
+    <button class="tablinks" onclick="openTab(event,'Favorites')">⭐ Favorites</button>
   </div>
 
-  <h3>⭐ Favorites</h3>
-  <div id="favResults"></div>
+  <div id="Swalath" class="tabcontent" style="display:block">
+    <div class="card">
+      <input type="number" id="swalathNumber" placeholder="Enter number of Swalath" min="1">
+      <button onclick="submitSwalath()">➕ Add</button>
+      <p>Total Swalath: <span id="swalathTotal">0</span></p>
+    </div>
+  </div>
+
+  <div id="Favorites" class="tabcontent">
+    <button onclick="loadFavorites()">📥 Load Latest Episodes</button>
+    <div id="favResults"></div>
+  </div>
 
 </div>
 
 <script>
-// Load current total
+// Tabs
+function openTab(evt, tabName){
+  let i, tabcontent, tablinks;
+  tabcontent = document.getElementsByClassName("tabcontent");
+  for(i=0;i<tabcontent.length;i++){tabcontent[i].style.display="none";}
+  tablinks = document.getElementsByClassName("tablinks");
+  for(i=0;i<tablinks.length;i++){tablinks[i].className=tablinks[i].className.replace(" active","");}
+  document.getElementById(tabName).style.display="block";
+  evt.currentTarget.className += " active";
+}
+
+// Load current Swalath total
 async function loadSwalathTotal(){
   let r = await fetch('/api/swalath/total');
   let d = await r.json();
@@ -146,7 +173,7 @@ async function submitSwalath(){
   }
 }
 
-// Load favorites automatically
+// Load favorites when user clicks
 async function loadFavorites(){
   let r = await fetch('/api/favorites');
   let d = await r.json();
@@ -164,7 +191,6 @@ async function loadFavorites(){
 
 // On page load
 loadSwalathTotal();
-loadFavorites();
 </script>
 
 </body>
