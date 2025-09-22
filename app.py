@@ -348,7 +348,7 @@ def podcast_detail(pid):
                 'audio_url':audio,
                 'description':entry.get('summary','')
             }
-    return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,latest=latest
+    return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,latest=latest)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
