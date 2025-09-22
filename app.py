@@ -107,7 +107,7 @@ audio{width:100%;margin-top:5px;border-radius:4px}
 
 <div class="container">
 
-  <h3>🙏 Add Swalath</h3>
+  <h3>📿 Add Swalath</h3>
   <div class="card">
     <input type="number" id="swalathNumber" placeholder="Enter number of Swalath" min="1">
     <button onclick="submitSwalath()">➕ Add</button>
