@@ -40,8 +40,10 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
 .saved-item{background:white;color:black;border-radius:12px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,0.1);text-align:center;}
 .saved-item img{border-radius:8px;max-width:100px;margin-bottom:8px;}
 .saved-item b{display:block;font-size:16px;margin-bottom:6px;}
-.saved-item button{width:32%;padding:8px;font-size:14px;margin-top:6px;margin-right:4px;}
+.saved-item button{padding:8px;font-size:14px;margin-top:6px;margin-right:4px;border-radius:6px;border:none;}
 .saved-item audio{width:100%;margin-top:6px;}
+.podcast{background:white;padding:10px;margin:10px 0;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);}
+.podcast img{max-width:80px;float:left;margin-right:10px;border-radius:6px;}
 </style>
 </head>
 <body>
@@ -62,8 +64,14 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
   {% for r in results %}
     <div class="podcast">
       <img src="{{ r.cover }}">
-      <b>{{ r.title }}</b>
-      <small>{{ r.description }}</small>
+      <b>{{ r.title }}</b><br>
+      <small>{{ r.description }}</small><br>
+      <form method="post" action="/podcast">
+        <input type="hidden" name="title" value="{{ r.title }}">
+        <input type="hidden" name="rss" value="{{ r.rss }}">
+        <input type="hidden" name="cover" value="{{ r.cover }}">
+        <button type="submit" style="background:#2563eb;color:white;padding:6px 12px;margin-top:6px;">➕ Add</button>
+      </form>
       <div style="clear:both;"></div>
     </div>
   {% endfor %}
@@ -244,7 +252,6 @@ def podcast_detail(pid):
                 'description': entry.get('summary','')
             })
 
-    DETAIL_HTML = PODCAST_GRID_HTML  # You can reuse grid style or create separate template
     return render_template_string(PODCAST_GRID_HTML, results=[], saved=[(pid, title, rss, cover)], latest_episodes={pid: episodes})
 
 @app.route("/podcast/delete/<int:pid>", methods=["POST"])
