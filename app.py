@@ -59,72 +59,15 @@ body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
 .container{max-width:500px;margin:0 auto;padding:10px;display:grid;grid-template-columns:1fr;gap:12px}
 .card{background:#fff;padding:20px;border-radius:12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer;font-size:20px;font-weight:bold}
 .card:hover{box-shadow:0 4px 10px rgba(0,0,0,0.2)}
-.green{background:#4CAF50;color:white}
 .orange{background:#f97316;color:white}
-.violet{background:#7c3aed;color:white}
 .red{background:#dc2626;color:white}
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="card green" onclick="location.href='/swalath'">📿 Dikr</div>
-  <div class="card violet" onclick="window.open('http://zippy-gretta-pscjunction-b779efe8.koyeb.app/','_blank')">📰 Suprabhatam</div>
   <div class="card red" onclick="window.open('http://capitalist-anthe-pscj-4a28f285.koyeb.app/','_blank')">📺 YouTube Live</div>
   <div class="card orange" onclick="location.href='/podcast'">🎙️ Podcasts</div>
 </div>
-</body>
-</html>
-"""
-
-SWALATH_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Swalath</title>
-<style>
-body{font-family:sans-serif;background:#f7f7f7;margin:0;padding:10px;color:#333}
-.card{background:#fff;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.1);padding:15px;margin-top:10px}
-input,button{width:100%;padding:12px;margin:8px 0;border-radius:6px;border:1px solid #ccc;box-sizing:border-box;font-size:18px}
-button{background:#4CAF50;color:white;border:none;cursor:pointer;font-weight:bold}
-button:hover{opacity:0.9}
-</style>
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-</head>
-<body>
-<h2 style="text-align:center;">📿 Swalath</h2>
-<div class="card">
-  <input type="number" id="swalathNumber" placeholder="Enter number" min="1">
-  <button onclick="submitSwalath()">➕ Add</button>
-  <p>Total: <span id="swalathTotal">0</span></p>
-  <p>Last added: <span id="lastAdded">-</span></p>
-</div>
-<div id="swalathEntries"></div>
-<script>
-async function loadSwalathTotal(){
-  let r=await fetch('/api/swalath/total'); let d=await r.json();
-  document.getElementById('swalathTotal').innerText=d.total;
-  document.getElementById('lastAdded').innerText=d.last_added||'-';
-  loadEntries();
-}
-async function submitSwalath(){
-  let n=document.getElementById('swalathNumber').value;
-  if(!n){Swal.fire({icon:'error',title:'Enter number'});return;}
-  let r=await fetch('/api/swalath/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:n})});
-  let d=await r.json();
-  if(r.ok){document.getElementById('swalathNumber').value='';loadSwalathTotal();}
-  else Swal.fire({icon:'error',title:'Error',text:d.error});
-}
-async function loadEntries(){
-  let r=await fetch('/api/swalath/entries'); let d=await r.json();
-  const c=document.getElementById('swalathEntries'); c.innerHTML='';
-  d.forEach(e=>{let div=document.createElement('div');div.className='card';
-    div.innerHTML=`${e.number} 🕰 ${e.added_at} <button style="margin-top:6px;padding:6px 10px;font-size:16px;" onclick="deleteEntry(${e.id})">❌</button>`; c.appendChild(div);
-  });
-}
-async function deleteEntry(id){await fetch('/api/swalath/delete/'+id,{method:'POST'}); loadSwalathTotal();}
-loadSwalathTotal();
-</script>
 </body>
 </html>
 """
