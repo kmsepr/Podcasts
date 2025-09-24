@@ -1,6 +1,5 @@
 from flask import Flask, render_template_string, request, redirect
 import sqlite3, os, requests, feedparser
-import json
 
 app = Flask(__name__)
 
@@ -66,12 +65,9 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
       <img src="{{ r.cover }}">
       <b>{{ r.title }}</b><br>
       <small>{{ r.description }}</small><br>
-      <form method="post" action="/">
-        <input type="hidden" name="title" value="{{ r.title }}">
-        <input type="hidden" name="rss" value="{{ r.rss }}">
-        <input type="hidden" name="cover" value="{{ r.cover }}">
-        <button type="submit" style="background:#2563eb;color:white;padding:6px 12px;margin-top:6px;">➕ Add</button>
-      </form>
+      <a href="/add?title={{ r.title }}&rss={{ r.rss }}&cover={{ r.cover }}">
+        <button type="button" style="background:#2563eb;color:white;padding:6px 12px;margin-top:6px;">➕ Add</button>
+      </a>
       <div style="clear:both;"></div>
     </div>
   {% endfor %}
@@ -188,20 +184,8 @@ def get_latest_episodes(podcasts, limit=5):
     return latest_episodes
 
 # ---------------- Home (Main Page) ----------------
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET"])
 def home():
-    if request.method=="POST":
-        title=request.form.get("title")
-        rss=request.form.get("rss")
-        cover=request.form.get("cover")
-        if rss:
-            conn=sqlite3.connect(DB_FILE)
-            c=conn.cursor()
-            c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
-            conn.commit()
-            conn.close()
-        return redirect("/")
-
     query = request.args.get("q")
     results = []
     if query:
@@ -221,6 +205,20 @@ def home():
     saved = get_podcasts()
     latest_episodes = get_latest_episodes(saved)
     return render_template_string(PODCAST_GRID_HTML, results=results, saved=saved, latest_episodes=latest_episodes)
+
+# ---------------- Add Podcast ----------------
+@app.route("/add")
+def add_podcast():
+    title = request.args.get("title")
+    rss = request.args.get("rss")
+    cover = request.args.get("cover")
+    if rss:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
+        conn.commit()
+        conn.close()
+    return redirect("/")
 
 # ---------------- Podcast Detail ----------------
 @app.route("/podcast/<int:pid>")
