@@ -95,11 +95,10 @@ let miniDesc = document.getElementById("miniDesc");
 let miniAudio = document.getElementById("miniAudio");
 let miniPlayPause = document.getElementById("miniPlayPause");
 
-let currentId = null, currentCover = null;
+let currentId = null;
 
 function openMiniPlayer(id, title, description, audioUrl, cover) {
     currentId = id;
-    currentCover = cover;
     miniTitle.innerText = title;
     miniDesc.innerText = description;
     miniAudio.src = audioUrl;
@@ -141,6 +140,9 @@ document.addEventListener("keydown", function(e) {
         }
         if (key === "0") { // close mini player
             closeMiniPlayer();
+        }
+        if (key === "9") { // jump directly to full player
+            goToFullPlayer();
         }
     }
     if (key === "5") { // toggle play/pause
