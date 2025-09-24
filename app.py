@@ -1,5 +1,5 @@
 from flask import Flask, render_template_string, request, redirect
-import sqlite3, os, feedparser, requests
+import sqlite3, os, feedparser
 
 app = Flask(__name__)
 
@@ -37,7 +37,9 @@ HTML = """
         .item img { width:100px; height:100px; object-fit:cover; border-radius:10px; }
         #player { position: fixed; bottom: 0; left: 0; right: 0; background:#111; color:#fff;
                   padding: 10px; display:none; }
-        #player audio { width: 100%; }
+        #player audio { width: 100%; margin-top:5px; }
+        #playingTitle { font-weight:bold; display:block; margin-bottom:4px; }
+        #playingDesc { font-size: 0.9em; color: #ccc; max-height:40px; overflow:hidden; text-overflow:ellipsis; }
         .form { padding: 10px; }
     </style>
 </head>
@@ -58,7 +60,8 @@ HTML = """
     </div>
 
     <div id="player">
-        <span id="playingTitle"></span><br>
+        <span id="playingTitle"></span>
+        <div id="playingDesc"></div>
         <audio id="audio" controls autoplay></audio>
     </div>
 
@@ -69,6 +72,7 @@ async function playPodcast(rss,title){
     if(data.url){
         document.getElementById("audio").src = data.url;
         document.getElementById("playingTitle").innerText = title;
+        document.getElementById("playingDesc").innerText = data.description || "";
         document.getElementById("player").style.display = "block";
     }
 }
@@ -114,14 +118,15 @@ def play():
     feed = feedparser.parse(rss)
     if feed.entries:
         audio_url = None
+        desc = feed.entries[0].get("description", "")
         for link in feed.entries[0].enclosures:
             if link.get("type","").startswith("audio"):
                 audio_url = link.get("href")
                 break
         if not audio_url:
             audio_url = feed.entries[0].get("link")
-        return {"url": audio_url}
-    return {"url": None}
-
+        return {"url": audio_url, "description": desc}
+    return {"url": None, "description": ""}
+    
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
