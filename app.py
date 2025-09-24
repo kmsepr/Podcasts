@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, redirect
+from flask import Flask, jsonify, render_template_string, request, redirect
 import sqlite3, os, requests, feedparser
 
 app = Flask(__name__)
@@ -10,203 +10,146 @@ os.makedirs(os.path.dirname(DB_FILE) or '.', exist_ok=True)
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS podcasts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            rss TEXT,
-            cover TEXT
-        )
-    ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS podcasts
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  rss TEXT UNIQUE,
+                  title TEXT,
+                  cover TEXT,
+                  last_played TIMESTAMP)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# ---------------- Helpers ----------------
-def get_podcasts():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT id,title,rss,cover FROM podcasts ORDER BY id DESC")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def get_latest_episode(rss_url):
-    try:
-        feed = feedparser.parse(rss_url)
-        for entry in feed.entries:
-            for enc in entry.get("enclosures", []):
-                if enc.get("href", "").startswith("http"):
-                    return {
-                        "title": entry.get("title", ""),
-                        "description": entry.get("summary", ""),
-                        "audio": enc["href"],
-                        "cover": feed.feed.get("image", {}).get("href", "")
-                    }
-    except:
-        return None
-    return None
-
-# ---------------- HTML ----------------
+# ---------------- HTML Template ----------------
 HOME_HTML = """
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Podcasts</title>
-<style>
-body { font-family: sans-serif; margin: 10px; background: #fafafa; }
-.searchbox input, .searchbox button { width:100%; padding:10px; margin:6px 0; font-size:16px; border-radius:6px; box-sizing:border-box; }
-.grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; }
-.episode-card { padding: 10px; background: white; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); cursor: pointer; text-align:center; }
-.episode-card img { width: 100%; border-radius: 8px; }
-.mini-player { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: white; padding: 10px;
-               display: flex; align-items: center; justify-content: space-between; }
-.mini-player.hidden { display: none; }
-.mini-info { flex: 1; margin-left: 10px; }
-.mini-title { font-weight: bold; font-size: 14px; }
-.mini-desc { font-size: 12px; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.button { cursor: pointer; font-size: 20px; padding: 0 10px; }
-</style>
-</head>
-<body>
-
-<h2>🎙️ Podcast Explorer</h2>
-
-<div class="searchbox">
-  <form method="get" action="/">
-    <input type="text" name="q" placeholder="Search podcasts..." value="{{ request.args.get('q','') }}">
-    <button type="submit">Search</button>
-  </form>
-</div>
-
-{% if results %}
-<div>
-  <h3>Search Results</h3>
-  <div class="grid">
-  {% for r in results %}
-    <div class="episode-card">
-      <img src="{{ r.cover }}">
-      <h4>{{ r.title }}</h4>
-      <a href="/add?title={{ r.title }}&rss={{ r.rss }}&cover={{ r.cover }}">
-        <button type="button">➕ Add</button>
-      </a>
-    </div>
-  {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-{% if saved %}
-<div>
-  <h3>Saved Podcasts</h3>
-  <div class="grid">
-    {% for pid, title, rss, cover, ep in saved %}
-      {% if ep %}
-      <div class="episode-card" onclick="openMiniPlayer('{{pid}}','{{ep.title}}','{{ep.description}}','{{ep.audio}}','{{ep.cover or cover}}')">
-        <img src="{{ep.cover or cover}}">
-        <h4>{{title}}</h4>
-        <p style="font-size:12px">{{ep.title}}</p>
-      </div>
-      {% endif %}
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-<!-- Mini Player -->
-<div id="miniPlayer" class="mini-player hidden" onclick="goToFullPlayer()">
-  <div class="mini-info">
-    <div id="miniTitle" class="mini-title"></div>
-    <div id="miniDesc" class="mini-desc"></div>
-  </div>
-  <div class="button" id="miniPlayPause" onclick="event.stopPropagation(); togglePlayPause()">▶️</div>
-  <audio id="miniAudio"></audio>
-</div>
-
-<script>
-let miniPlayer = document.getElementById("miniPlayer");
-let miniTitle = document.getElementById("miniTitle");
-let miniDesc = document.getElementById("miniDesc");
-let miniAudio = document.getElementById("miniAudio");
-let miniPlayPause = document.getElementById("miniPlayPause");
-
-let currentId = null;
-
-function openMiniPlayer(id, title, description, audioUrl, cover) {
-    currentId = id;
-    miniTitle.innerText = title;
-    miniDesc.innerText = description;
-    miniAudio.src = audioUrl;
-    miniAudio.play();
-    miniPlayPause.innerText = "⏸";
-    miniPlayer.classList.remove("hidden");
-}
-
-function togglePlayPause() {
-    if (miniAudio.paused) {
-        miniAudio.play();
-        miniPlayPause.innerText = "⏸";
-    } else {
-        miniAudio.pause();
-        miniPlayPause.innerText = "▶️";
-    }
-}
-
-function closeMiniPlayer() {
-    miniAudio.pause();
-    miniAudio.src = "";
-    miniPlayer.classList.add("hidden");
-}
-
-function goToFullPlayer() {
-    if (currentId) {
-        window.location.href = "/player/" + currentId;
-    }
-}
-
-// Keypad mapping
-document.addEventListener("keydown", function(e) {
-    let key = e.key;
-    if (!isNaN(key)) {
-        let index = parseInt(key) - 1;
-        let gridItems = document.querySelectorAll(".episode-card");
-        if (index >= 0 && index < gridItems.length) {
-            gridItems[index].click();
-        }
-        if (key === "0") { closeMiniPlayer(); }
-        if (key === "9") { goToFullPlayer(); }
-    }
-    if (key === "5") { togglePlayPause(); }
-});
-</script>
-
-</body>
-</html>
-"""
-
-PLAYER_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>{{podcast[1]}}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { font-family: sans-serif; text-align: center; background: #111; color: white; }
-    img { max-width: 300px; border-radius: 15px; margin-top: 20px; }
-    h2 { margin: 10px 0; }
-    p { color: #ccc; margin: 10px; }
-    audio { width: 90%; margin-top: 15px; }
-    a { color: #0af; display: block; margin-top: 20px; }
+    body { font-family: sans-serif; margin:0; padding:0; background:#f4f4f4; }
+    h2 { margin:10px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:10px; }
+    .card { background:white; padding:10px; border-radius:12px; text-align:center; cursor:pointer; }
+    .card img { width:100%; border-radius:12px; max-height:120px; object-fit:cover; }
+    .mini-player {
+        position:fixed; bottom:0; left:0; right:0;
+        background:#222; color:white; display:flex;
+        align-items:center; padding:5px 10px;
+    }
+    .mini-cover { width:40px; height:40px; margin-right:10px; border-radius:8px; object-fit:cover; }
+    .ticker { flex:1; white-space:nowrap; overflow:hidden; }
+    .ticker span { display:inline-block; padding-left:100%; animation:scroll 12s linear infinite; }
+    @keyframes scroll { from {transform:translateX(0);} to {transform:translateX(-100%);} }
+    .mini-controls button { background:none; border:none; color:white; font-size:20px; margin-left:10px; cursor:pointer; }
+    .full-player {
+        position:fixed; top:0; left:0; right:0; bottom:0; background:#111; color:white;
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+        padding:20px; z-index:1000; display:none;
+    }
+    .full-player img { max-width:80%; max-height:40%; border-radius:12px; margin-bottom:20px; }
+    .full-player h2, .full-player p { text-align:center; }
+    .full-controls button {
+        background:#444; border:none; color:white; padding:10px 20px;
+        margin:10px; border-radius:8px; font-size:18px;
+    }
   </style>
 </head>
 <body>
-  <img src="{{cover}}" alt="cover">
-  <h2>{{title}}</h2>
-  <p>{{description}}</p>
-  <audio controls autoplay src="{{audio}}"></audio>
-  <a href="/">⬅️ Back</a>
+  <h2>Podcasts</h2>
+  <form method="get" action="/search" style="padding:10px;">
+    <input name="q" placeholder="Search podcasts" style="width:70%">
+    <button type="submit">Search</button>
+  </form>
+
+  <div class="grid">
+    {% for p in podcasts %}
+      <div class="card" onclick="loadPodcast('{{p[0]}}')" data-key="{{loop.index}}">
+        <img src="{{p[2]}}">
+        <div>{{p[1]}}</div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Mini Player -->
+  <div id="miniPlayer" class="mini-player" style="display:none;" onclick="openFullPlayer()">
+    <img id="miniCover" class="mini-cover">
+    <div class="ticker"><span id="miniTitle"></span></div>
+    <div class="mini-controls">
+      <button onclick="togglePlay(event)">⏯</button>
+      <button onclick="closeMini(event)">✖</button>
+    </div>
+  </div>
+
+  <!-- Full Player -->
+  <div id="fullPlayer" class="full-player">
+    <img id="fullCover">
+    <h2 id="fullTitle"></h2>
+    <p id="fullDesc"></p>
+    <div class="full-controls">
+      <button onclick="togglePlay(event)">⏯ Play/Pause</button>
+      <button onclick="closeFull(event)">Close</button>
+    </div>
+  </div>
+
+<script>
+let audio = new Audio();
+let current = null;
+
+function loadPodcast(pid){
+  fetch(`/api/podcast/${pid}/episodes`)
+   .then(r=>r.json()).then(data=>{
+     if(data.length > 0){
+       let ep = data[0];
+       playEpisode(ep);
+     }
+   });
+}
+
+function playEpisode(ep){
+  current = ep;
+  audio.src = ep.url;
+  audio.play();
+  document.getElementById("miniPlayer").style.display = "flex";
+  document.getElementById("miniCover").src = ep.cover || ep.channel_cover;
+  document.getElementById("miniTitle").innerText = ep.title;
+  document.getElementById("fullCover").src = ep.cover || ep.channel_cover;
+  document.getElementById("fullTitle").innerText = ep.title;
+  document.getElementById("fullDesc").innerText = ep.description || "";
+}
+
+function togglePlay(e){
+  e.stopPropagation();
+  if(audio.paused) audio.play(); else audio.pause();
+}
+
+function closeMini(e){
+  e.stopPropagation();
+  document.getElementById("miniPlayer").style.display="none";
+  audio.pause();
+}
+
+function openFullPlayer(){
+  if(!current) return;
+  document.getElementById("fullPlayer").style.display="flex";
+}
+
+function closeFull(e){
+  e.stopPropagation();
+  document.getElementById("fullPlayer").style.display="none";
+}
+
+document.addEventListener("keydown", function(e){
+  if(e.key >= "1" && e.key <= "9"){
+    let index = parseInt(e.key);
+    let card = document.querySelector(`.card[data-key='${index}']`);
+    if(card) card.click();
+  }
+  if(e.key === "5"){ togglePlay(e); }
+  if(e.key === "0"){ closeMini(e); }
+});
+</script>
 </body>
 </html>
 """
@@ -214,58 +157,69 @@ PLAYER_HTML = """
 # ---------------- Routes ----------------
 @app.route("/")
 def home():
-    query = request.args.get("q")
-    results = []
-    if query:
-        url = f"https://itunes.apple.com/search?media=podcast&term={query}"
-        try:
-            r = requests.get(url, timeout=10).json()
-            for item in r.get("results", []):
-                results.append({
-                    "title": item.get("collectionName"),
-                    "rss": item.get("feedUrl"),
-                    "cover": item.get("artworkUrl100")
-                })
-        except:
-            pass
-
-    saved = []
-    for pid, title, rss, cover in get_podcasts():
-        ep = get_latest_episode(rss)
-        saved.append((pid, title, rss, cover, ep))
-
-    return render_template_string(HOME_HTML, results=results, saved=saved)
-
-@app.route("/add")
-def add_podcast():
-    title = request.args.get("title")
-    rss = request.args.get("rss")
-    cover = request.args.get("cover")
-    if rss:
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
-        conn.commit()
-        conn.close()
-    return redirect("/")
-
-@app.route("/player/<int:pid>")
-def player(pid):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id,title,rss,cover FROM podcasts WHERE id=?", (pid,))
+    c.execute("SELECT id, title, cover FROM podcasts ORDER BY id DESC")
+    podcasts = c.fetchall()
+    conn.close()
+    return render_template_string(HOME_HTML, podcasts=podcasts)
+
+@app.route("/search")
+def search():
+    q = request.args.get("q", "")
+    if not q: return redirect("/")
+    r = requests.get("https://itunes.apple.com/search", params={"term":q,"media":"podcast"})
+    results = []
+    if r.ok:
+        js = r.json()
+        results = [{"title":t["collectionName"],"cover":t["artworkUrl600"],"rss":t.get("feedUrl")} for t in js.get("results",[]) if t.get("feedUrl")]
+    return jsonify(results)
+
+@app.route("/api/add_by_rss", methods=["POST"])
+def add_by_rss():
+    rss = request.form.get("rss")
+    if not rss: return "Missing",400
+    d = feedparser.parse(rss)
+    if not d.feed: return "Invalid RSS",400
+    title = d.feed.get("title","(no title)")
+    cover = d.feed.get("image",{}).get("href") or ""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO podcasts(rss,title,cover) VALUES(?,?,?)",(rss,title,cover))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+    conn.close()
+    return redirect("/")
+
+@app.route("/api/podcast/<int:pid>/episodes")
+def episodes(pid):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT rss, cover FROM podcasts WHERE id=?",(pid,))
     row = c.fetchone()
     conn.close()
-    if not row:
-        return "Podcast not found"
-    pid, title, rss, cover = row
-    ep = get_latest_episode(rss)
-    return render_template_string(PLAYER_HTML,
-        podcast=row,
-        title=title, description=ep["title"] if ep else "",
-        cover=ep["cover"] or cover if ep else cover,
-        audio=ep["audio"] if ep else "")
+    if not row: return jsonify([])
+    rss, channel_cover = row
+    d = feedparser.parse(rss)
+    eps = []
+    for e in d.entries:
+        audio_url = None
+        cover = None
+        for l in e.get("links",[]):
+            if l.get("type","").startswith("audio"):
+                audio_url = l.get("href")
+        if "image" in e: cover = e.image.get("href")
+        eps.append({
+          "title": e.get("title",""),
+          "url": audio_url,
+          "description": e.get("summary",""),
+          "cover": cover,
+          "channel_cover": channel_cover
+        })
+    return jsonify(eps)
 
-# ---------------- Run ----------------
-if __name__ == '__main__':
+# ---------------- Run Server ----------------
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
