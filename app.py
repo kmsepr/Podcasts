@@ -9,30 +9,32 @@ HTML = """
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Podcasts</title>
+  <title>Podcast Player</title>
   <style>
-    body { font-family: sans-serif; margin:0; padding:0; background:#f9f9f9; }
+    body { font-family: sans-serif; margin:0; background:#f9f9f9; }
     header { padding:10px; background:#333; color:#fff; text-align:center; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; padding:10px; }
-    .card { background:#fff; border-radius:10px; padding:10px; text-align:center; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2); }
+    form { padding:10px; text-align:center; background:#eee; }
+    input[type=text] { padding:8px; width:65%; font-size:16px; }
+    button { padding:8px 12px; margin:5px; font-size:14px; cursor:pointer; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; padding:12px; }
+    .card { background:#fff; border-radius:10px; padding:10px; text-align:center; box-shadow:0 2px 4px rgba(0,0,0,0.2); }
     .card img { width:100%; border-radius:8px; }
-    form { padding:10px; text-align:center; }
-    input[type=text] { padding:8px; width:70%; }
-    button { padding:8px 12px; margin:5px; cursor:pointer; }
+    .card-title { font-size:15px; margin:6px 0; min-height:40px; }
+    .card button { width:45%; }
 
     /* Mini player */
     .mini-player { position:fixed; bottom:0; left:0; right:0; background:#222; color:#fff; padding:8px; display:none; }
     #mini-title { font-size:14px; font-weight:bold; display:block; }
     #mini-description { white-space:nowrap; overflow:hidden; }
-    #mini-description span { display:inline-block; padding-left:100%; animation:scroll-left 20s linear infinite; }
+    #mini-description span { display:inline-block; padding-left:100%; animation:scroll-left 18s linear infinite; }
     @keyframes scroll-left { 0%{transform:translateX(100%);} 100%{transform:translateX(-100%);} }
     audio { width:100%; margin-top:5px; }
 
     /* Full player */
     #full-player { display:none; padding:20px; text-align:center; }
-    #full-cover { max-width:90%; border-radius:12px; }
-    #full-title { font-size:18px; margin:10px 0; }
-    #full-desc { font-size:14px; text-align:left; max-height:150px; overflow:auto; background:#f0f0f0; padding:10px; border-radius:8px; }
+    #full-cover { max-width:90%; border-radius:12px; margin-bottom:10px; }
+    #full-title { font-size:20px; margin:10px 0; }
+    #full-desc { font-size:16px; text-align:left; max-height:200px; overflow:auto; background:#f0f0f0; padding:10px; border-radius:8px; }
   </style>
 </head>
 <body>
@@ -40,9 +42,14 @@ HTML = """
   <form onsubmit="searchPodcasts(); return false;">
     <input type="text" id="q" placeholder="Search podcast...">
     <button type="submit">Search</button>
+    <button type="button" onclick="showFavorites()">Favorites</button>
   </form>
 
+  <h3 style="padding-left:12px;">Results</h3>
   <div class="grid" id="results"></div>
+
+  <h3 style="padding-left:12px;">Favorites</h3>
+  <div class="grid" id="favorites"></div>
 
   <!-- Mini Player -->
   <div class="mini-player" id="mini-player" onclick="openFullPlayer()">
@@ -62,6 +69,7 @@ HTML = """
 
 <script>
 let podcasts = [];
+let favorites = [];
 let currentEpisode = null;
 
 async function searchPodcasts(){
@@ -69,20 +77,36 @@ async function searchPodcasts(){
   let res = await fetch("/api/search?q="+encodeURIComponent(q));
   let data = await res.json();
   podcasts = data;
-  let grid = document.getElementById("results");
+  renderGrid("results", podcasts, true);
+}
+
+function renderGrid(targetId, list, allowAdd){
+  let grid = document.getElementById(targetId);
   grid.innerHTML = "";
-  data.forEach((p,i)=>{
+  list.forEach((p,i)=>{
     let card = document.createElement("div");
     card.className="card";
-    card.innerHTML = "<img src='"+p.cover+"'><br>"+p.title+
-      "<br><button onclick='playPodcast("+i+")'>Play</button>";
+    card.innerHTML = "<img src='"+p.cover+"'><div class='card-title'>"+p.title+"</div>";
+    card.innerHTML += "<button onclick='playPodcast(\""+p.rss.replace(/'/g,"")+"\",\""+p.title.replace(/'/g,"")+"\",\""+p.cover+"\")'>Play</button>";
+    if(allowAdd){
+      card.innerHTML += "<button onclick='addFavorite("+i+")'>Add</button>";
+    }
     grid.appendChild(card);
   });
 }
 
-async function playPodcast(i){
+function addFavorite(i){
   let p = podcasts[i];
-  let res = await fetch("/api/play?rss="+encodeURIComponent(p.rss));
+  if(!favorites.some(f=>f.rss===p.rss)){ favorites.push(p); }
+  renderGrid("favorites", favorites, false);
+}
+
+function showFavorites(){
+  renderGrid("favorites", favorites, false);
+}
+
+async function playPodcast(rss,title,cover){
+  let res = await fetch("/api/play?rss="+encodeURIComponent(rss));
   let ep = await res.json();
   if(ep.error){ alert(ep.error); return; }
   currentEpisode = ep;
@@ -101,7 +125,6 @@ function openFullPlayer(){
   document.getElementById("full-title").innerText = currentEpisode.title;
   document.getElementById("full-desc").innerText = currentEpisode.description;
   document.getElementById("full-audio").src = currentEpisode.audio;
-  document.getElementById("full-audio").play();
   document.getElementById("full-player").style.display="block";
 }
 
@@ -113,9 +136,12 @@ function closeFullPlayer(){
 document.addEventListener("keydown", e=>{
   if(e.key>="1" && e.key<="9"){
     let idx = parseInt(e.key)-1;
-    if(idx<podcasts.length){ playPodcast(idx); }
+    if(idx<podcasts.length){ 
+      playPodcast(podcasts[idx].rss, podcasts[idx].title, podcasts[idx].cover);
+    }
   }
   if(e.key==="0"){ document.getElementById("mini-player").style.display="none"; }
+  if(e.key.toLowerCase()==="a"){ showFavorites(); }
 });
 </script>
 </body>
@@ -135,6 +161,8 @@ def api_search():
     results = r.json().get("results",[])
     out=[]
     for it in results:
+        if not it.get("feedUrl"):
+            continue
         out.append({
             "title": it.get("collectionName"),
             "rss": it.get("feedUrl"),
