@@ -23,7 +23,7 @@ def init_db():
 
 init_db()
 
-# ---------------- HTML Template ----------------
+# ---------------- HTML ----------------
 PODCAST_GRID_HTML = """
 <!DOCTYPE html>
 <html>
@@ -36,13 +36,10 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
 .card{border-radius:12px;padding:20px;color:white;text-align:center;font-size:18px;background:#f97316;}
 .searchbox input, .searchbox button{width:100%;padding:10px;margin:6px 0;font-size:18px;border-radius:6px;box-sizing:border-box;}
 .saved-grid{display:grid;grid-template-columns:1fr;gap:10px;}
-.saved-item{background:white;color:black;border-radius:12px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,0.1);text-align:center;}
+.saved-item{background:white;color:black;border-radius:12px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,0.1);text-align:center;cursor:pointer;}
 .saved-item img{border-radius:8px;max-width:100px;margin-bottom:8px;}
 .saved-item b{display:block;font-size:16px;margin-bottom:6px;}
-.saved-item button{padding:8px;font-size:14px;margin-top:6px;margin-right:4px;border-radius:6px;border:none;}
-.saved-item audio{width:100%;margin-top:6px;}
-.podcast{background:white;padding:10px;margin:10px 0;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.1);}
-.podcast img{max-width:80px;float:left;margin-right:10px;border-radius:6px;}
+.hidden-player{display:none;}
 </style>
 </head>
 <body>
@@ -64,11 +61,9 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
     <div class="podcast">
       <img src="{{ r.cover }}">
       <b>{{ r.title }}</b><br>
-      <small>{{ r.description }}</small><br>
       <a href="/add?title={{ r.title }}&rss={{ r.rss }}&cover={{ r.cover }}">
-        <button type="button" style="background:#2563eb;color:white;padding:6px 12px;margin-top:6px;">➕ Add</button>
+        <button type="button">➕ Add</button>
       </a>
-      <div style="clear:both;"></div>
     </div>
   {% endfor %}
 </div>
@@ -79,70 +74,71 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
   <h3>Saved Podcasts</h3>
   <div class="saved-grid">
     {% for pid, title, rss, cover in saved %}
-      <div class="saved-item" id="podcast-{{ pid }}">
+      <div class="saved-item" onclick="startPodcast({{ pid }})">
         {% if cover %}<img src="{{ cover }}">{% endif %}
         <b>{{ title }}</b>
-        {% if latest_episodes.get(pid) %}
-          <audio id="player-{{ pid }}" controls autoplay src="{{ latest_episodes[pid][0]['audio_url'] }}"></audio>
-          <div>
-            <button onclick="prevEpisode({{ pid }})">⏮ Prev</button>
-            <button onclick="nextEpisode({{ pid }})">⏭ Next</button>
-            <button onclick="togglePlayPause({{ pid }})" id="playPause-{{ pid }}">⏸ Pause</button>
-          </div>
-        {% endif %}
-        <div>
-          <a href="/podcast/{{ pid }}"><button style="background:#4CAF50;color:white;">Open</button></a>
-          <form method="post" action="/podcast/delete/{{ pid }}" style="display:inline;">
-            <button type="submit" style="background:#dc2626;color:white;">Delete</button>
-          </form>
-        </div>
+        <form method="post" action="/podcast/delete/{{ pid }}">
+          <button type="submit" style="background:#dc2626;color:white;border:none;padding:6px 12px;border-radius:6px;">Delete</button>
+        </form>
       </div>
+      <!-- hidden player -->
+      {% if latest_episodes.get(pid) %}
+        <audio id="player-{{ pid }}" class="hidden-player" src="{{ latest_episodes[pid][0]['audio_url'] }}"></audio>
+        <script>
+        allEpisodes[{{ pid }}] = {{ latest_episodes[pid]|tojson }};
+        allEpisodes[{{ pid }}].current = 0;
+        </script>
+      {% endif %}
     {% endfor %}
   </div>
 </div>
 {% endif %}
 
 <script>
-let allEpisodes = {{ latest_episodes|tojson }};
+let allEpisodes = {};
+let currentPid = null;
 
-// JS functions for multiple podcasts
-function loadEpisode(pid, index){
-    let player = document.getElementById("player-" + pid);
-    let ep = allEpisodes[pid][index];
-    player.src = ep.audio_url;
-    player.play();
-    document.getElementById("playPause-" + pid).innerText = "⏸ Pause";
-    allEpisodes[pid].current = index;
+function loadEpisode(pid,index){
+  let player = document.getElementById("player-" + pid);
+  let ep = allEpisodes[pid][index];
+  allEpisodes[pid].current = index;
+  player.src = ep.audio_url;
+  player.play();
+  currentPid = pid;
+}
+
+function startPodcast(pid){
+  if(!allEpisodes[pid]) return;
+  loadEpisode(pid,0);
 }
 
 function nextEpisode(pid){
-    let episodes = allEpisodes[pid];
-    let index = (episodes.current + 1) % episodes.length;
-    loadEpisode(pid, index);
+  let eps = allEpisodes[pid];
+  let idx = (eps.current + 1) % eps.length;
+  loadEpisode(pid, idx);
 }
 
 function prevEpisode(pid){
-    let episodes = allEpisodes[pid];
-    let index = (episodes.current - 1 + episodes.length) % episodes.length;
-    loadEpisode(pid, index);
+  let eps = allEpisodes[pid];
+  let idx = (eps.current - 1 + eps.length) % eps.length;
+  loadEpisode(pid, idx);
 }
 
-function togglePlayPause(pid){
-    let player = document.getElementById("player-" + pid);
-    let btn = document.getElementById("playPause-" + pid);
-    if(player.paused){
-        player.play();
-        btn.innerText = "⏸ Pause";
-    } else {
-        player.pause();
-        btn.innerText = "▶ Play";
-    }
+function togglePlay(pid){
+  let player = document.getElementById("player-" + pid);
+  if(player.paused){ player.play(); }
+  else { player.pause(); }
 }
 
-// Initialize current index
-for(let pid in allEpisodes){
-    allEpisodes[pid].current = 0;
-}
+// Keypad mapping
+document.addEventListener("keydown", e=>{
+  if(currentPid==null) return;
+  switch(e.key){
+    case "4": prevEpisode(currentPid); break;
+    case "5": togglePlay(currentPid); break;
+    case "6": nextEpisode(currentPid); break;
+  }
+});
 </script>
 
 </body>
@@ -183,8 +179,8 @@ def get_latest_episodes(podcasts, limit=5):
             pass
     return latest_episodes
 
-# ---------------- Home (Main Page) ----------------
-@app.route("/", methods=["GET"])
+# ---------------- Routes ----------------
+@app.route("/")
 def home():
     query = request.args.get("q")
     results = []
@@ -206,7 +202,6 @@ def home():
     latest_episodes = get_latest_episodes(saved)
     return render_template_string(PODCAST_GRID_HTML, results=results, saved=saved, latest_episodes=latest_episodes)
 
-# ---------------- Add Podcast ----------------
 @app.route("/add")
 def add_podcast():
     title = request.args.get("title")
@@ -220,36 +215,6 @@ def add_podcast():
         conn.close()
     return redirect("/")
 
-# ---------------- Podcast Detail ----------------
-@app.route("/podcast/<int:pid>")
-def podcast_detail(pid):
-    conn=sqlite3.connect(DB_FILE)
-    c=conn.cursor()
-    c.execute("SELECT title,rss,cover FROM podcasts WHERE id=?",(pid,))
-    r=c.fetchone()
-    conn.close()
-    if not r: return "Not found",404
-    title,rss,cover=r
-
-    feed = feedparser.parse(rss)
-    episodes = []
-    for entry in feed.entries[:10]:
-        audio=''
-        for enc in entry.get('enclosures',[]):
-            if enc.get('href','').startswith('http'):
-                audio = enc['href']
-                break
-        if audio:
-            episodes.append({
-                'title': entry.get('title',''),
-                'pub_date': entry.get('published',''),
-                'audio_url': audio,
-                'description': entry.get('summary','')
-            })
-
-    return render_template_string(PODCAST_GRID_HTML, results=[], saved=[(pid, title, rss, cover)], latest_episodes={pid: episodes})
-
-# ---------------- Delete Podcast ----------------
 @app.route("/podcast/delete/<int:pid>", methods=["POST"])
 def podcast_delete(pid):
     conn = sqlite3.connect(DB_FILE)
@@ -259,6 +224,6 @@ def podcast_delete(pid):
     conn.close()
     return redirect("/")
 
-# ---------------- Run App ----------------
+# ---------------- Run ----------------
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
