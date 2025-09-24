@@ -1,192 +1,212 @@
-from flask import Flask, render_template_string, request, jsonify
-import requests, feedparser
+from flask import Flask, render_template_string, request, redirect, jsonify
+import sqlite3, os, requests, feedparser
 
 app = Flask(__name__)
 
-# ---------------- HTML TEMPLATE ----------------
-HTML = """
-<!DOCTYPE html>
+# ---------------- Persistent DB ----------------
+DB_FILE = 'podcasts.db'
+os.makedirs(os.path.dirname(DB_FILE) or '.', exist_ok=True)
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS podcasts
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  rss TEXT UNIQUE,
+                  title TEXT,
+                  description TEXT,
+                  image TEXT)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# ---------------- Helpers ----------------
+def add_podcast(rss):
+    feed = feedparser.parse(rss)
+    if not feed.feed:
+        return None
+    title = feed.feed.get("title", "Untitled")
+    desc = feed.feed.get("description", "")
+    img = feed.feed.get("image", {}).get("href", "")
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT OR IGNORE INTO podcasts (rss,title,description,image) VALUES (?,?,?,?)",
+                  (rss, title, desc, img))
+        conn.commit()
+    except Exception as e:
+        print("DB insert error:", e)
+    conn.close()
+    return {"rss": rss, "title": title, "description": desc, "image": img}
+
+def get_podcasts():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT id,rss,title,description,image FROM podcasts")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+# ---------------- HTML Template ----------------
+TEMPLATE = """
+<!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Podcast Player</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; margin:0; background:#f9f9f9; }
-    header { padding:10px; background:#333; color:#fff; text-align:center; }
-    form { padding:10px; text-align:center; background:#eee; }
-    input[type=text] { padding:8px; width:65%; font-size:16px; }
-    button { padding:8px 12px; margin:5px; font-size:14px; cursor:pointer; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; padding:12px; }
-    .card { background:#fff; border-radius:10px; padding:10px; text-align:center; box-shadow:0 2px 4px rgba(0,0,0,0.2); }
-    .card img { width:100%; border-radius:8px; }
-    .card-title { font-size:15px; margin:6px 0; min-height:40px; }
-    .card button { width:45%; }
-
-    /* Mini player */
-    .mini-player { position:fixed; bottom:0; left:0; right:0; background:#222; color:#fff; padding:8px; display:none; }
-    #mini-title { font-size:14px; font-weight:bold; display:block; }
-    #mini-description { white-space:nowrap; overflow:hidden; }
-    #mini-description span { display:inline-block; padding-left:100%; animation:scroll-left 18s linear infinite; }
-    @keyframes scroll-left { 0%{transform:translateX(100%);} 100%{transform:translateX(-100%);} }
-    audio { width:100%; margin-top:5px; }
-
-    /* Full player */
-    #full-player { display:none; padding:20px; text-align:center; }
-    #full-cover { max-width:90%; border-radius:12px; margin-bottom:10px; }
-    #full-title { font-size:20px; margin:10px 0; }
-    #full-desc { font-size:16px; text-align:left; max-height:200px; overflow:auto; background:#f0f0f0; padding:10px; border-radius:8px; }
+    body { font-family: sans-serif; margin:0; padding:0; background:#f5f5f5; }
+    h1 { font-size:20px; padding:10px; text-align:center; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+            gap:10px; padding:10px; }
+    .card { background:#fff; padding:10px; border-radius:10px; text-align:center;
+            box-shadow:0 2px 4px rgba(0,0,0,0.2); }
+    .card img { max-width:100%; height:100px; object-fit:cover; border-radius:6px; }
+    .card h3 { font-size:14px; margin:5px 0; }
+    .card button { font-size:12px; padding:5px 10px; margin-top:5px; }
+    form { display:flex; gap:5px; justify-content:center; padding:10px; }
+    input { flex:1; padding:6px; font-size:14px; }
+    button { padding:6px 12px; }
+    /* Mini Player */
+    #miniPlayer { position:fixed; bottom:0; left:0; right:0;
+                  background:#222; color:#fff; padding:8px;
+                  display:none; align-items:center; }
+    #miniPlayer img { width:40px; height:40px; object-fit:cover; margin-right:8px; }
+    #scrollDesc { white-space:nowrap; overflow:hidden; flex:1; }
+    #scrollDesc span { display:inline-block; padding-left:100%; animation:scroll 12s linear infinite; }
+    @keyframes scroll { from{transform:translateX(0);} to{transform:translateX(-100%);} }
+    /* Full Player */
+    #fullPlayer { display:none; position:fixed; top:0; left:0; right:0; bottom:0;
+                  background:#111; color:#fff; padding:20px; overflow:auto; }
+    #fullPlayer img { width:100%; border-radius:12px; }
+    #fullPlayer h2 { margin:10px 0; font-size:18px; }
+    #closeBtn { background:red; color:#fff; padding:6px 12px; border:none; margin-top:10px; }
   </style>
 </head>
 <body>
-  <header><h2>Podcast Player</h2></header>
-  <form onsubmit="searchPodcasts(); return false;">
-    <input type="text" id="q" placeholder="Search podcast...">
+  <h1>Podcast App</h1>
+
+  <!-- Search -->
+  <form method="get" action="/">
+    <input type="text" name="q" placeholder="Search podcast">
     <button type="submit">Search</button>
-    <button type="button" onclick="showFavorites()">Favorites</button>
   </form>
 
-  <h3 style="padding-left:12px;">Results</h3>
-  <div class="grid" id="results"></div>
+  {% if results %}
+  <div class="grid">
+    {% for r in results %}
+    <div class="card">
+      <img src="{{r.image}}" alt="">
+      <h3>{{r.title}}</h3>
+      <form method="post" action="/add">
+        <input type="hidden" name="rss" value="{{r.rss}}">
+        <button type="submit">Add</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
-  <h3 style="padding-left:12px;">Favorites</h3>
-  <div class="grid" id="favorites"></div>
+  <!-- Grid of saved podcasts -->
+  <div class="grid">
+    {% for id,rss,title,desc,img in podcasts %}
+    <div class="card" onclick="playPodcast({{id}},'{{title}}','{{desc}}','{{img}}','{{rss}}')">
+      <img src="{{img}}" alt="">
+      <h3>{{title}}</h3>
+    </div>
+    {% endfor %}
+  </div>
 
   <!-- Mini Player -->
-  <div class="mini-player" id="mini-player" onclick="openFullPlayer()">
-    <span id="mini-title"></span>
-    <div id="mini-description"><span id="mini-desc-text"></span></div>
-    <audio id="mini-audio" controls></audio>
+  <div id="miniPlayer" onclick="openFullPlayer()">
+    <img id="miniImg" src="">
+    <div id="scrollDesc"><span id="miniDesc"></span></div>
+    <button onclick="togglePlay(event)">⏯</button>
+    <button onclick="closeMini(event)">❌</button>
   </div>
 
   <!-- Full Player -->
-  <div id="full-player">
-    <img id="full-cover" src="">
-    <h2 id="full-title"></h2>
-    <p id="full-desc"></p>
-    <audio id="full-audio" controls></audio>
-    <br><button onclick="closeFullPlayer()">Close</button>
+  <div id="fullPlayer">
+    <img id="fullImg" src="">
+    <h2 id="fullTitle"></h2>
+    <p id="fullDesc"></p>
+    <audio id="fullAudio" controls autoplay style="width:100%"></audio>
+    <button id="closeBtn" onclick="closeFull()">Close</button>
   </div>
 
-<script>
-let podcasts = [];
-let favorites = [];
-let currentEpisode = null;
+  <script>
+    let current={};
 
-async function searchPodcasts(){
-  let q = document.getElementById("q").value;
-  let res = await fetch("/api/search?q="+encodeURIComponent(q));
-  let data = await res.json();
-  podcasts = data;
-  renderGrid("results", podcasts, true);
-}
-
-function renderGrid(targetId, list, allowAdd){
-  let grid = document.getElementById(targetId);
-  grid.innerHTML = "";
-  list.forEach((p,i)=>{
-    let card = document.createElement("div");
-    card.className="card";
-    card.innerHTML = "<img src='"+p.cover+"'><div class='card-title'>"+p.title+"</div>";
-    card.innerHTML += "<button onclick='playPodcast(\""+p.rss.replace(/'/g,"")+"\",\""+p.title.replace(/'/g,"")+"\",\""+p.cover+"\")'>Play</button>";
-    if(allowAdd){
-      card.innerHTML += "<button onclick='addFavorite("+i+")'>Add</button>";
+    function playPodcast(id,title,desc,img,rss){
+      current={id,title,desc,img,rss};
+      document.getElementById('miniPlayer').style.display='flex';
+      document.getElementById('miniImg').src=img;
+      document.getElementById('miniDesc').innerText=desc || title;
+      // demo audio
+      document.getElementById('fullAudio').src='https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
     }
-    grid.appendChild(card);
-  });
-}
 
-function addFavorite(i){
-  let p = podcasts[i];
-  if(!favorites.some(f=>f.rss===p.rss)){ favorites.push(p); }
-  renderGrid("favorites", favorites, false);
-}
-
-function showFavorites(){
-  renderGrid("favorites", favorites, false);
-}
-
-async function playPodcast(rss,title,cover){
-  let res = await fetch("/api/play?rss="+encodeURIComponent(rss));
-  let ep = await res.json();
-  if(ep.error){ alert(ep.error); return; }
-  currentEpisode = ep;
-
-  document.getElementById("mini-player").style.display="block";
-  document.getElementById("mini-title").innerText = ep.title;
-  document.getElementById("mini-desc-text").innerText = ep.description;
-  let audio = document.getElementById("mini-audio");
-  audio.src = ep.audio;
-  audio.play();
-}
-
-function openFullPlayer(){
-  if(!currentEpisode) return;
-  document.getElementById("full-cover").src = currentEpisode.cover || "";
-  document.getElementById("full-title").innerText = currentEpisode.title;
-  document.getElementById("full-desc").innerText = currentEpisode.description;
-  document.getElementById("full-audio").src = currentEpisode.audio;
-  document.getElementById("full-player").style.display="block";
-}
-
-function closeFullPlayer(){
-  document.getElementById("full-player").style.display="none";
-}
-
-// Keypad controls
-document.addEventListener("keydown", e=>{
-  if(e.key>="1" && e.key<="9"){
-    let idx = parseInt(e.key)-1;
-    if(idx<podcasts.length){ 
-      playPodcast(podcasts[idx].rss, podcasts[idx].title, podcasts[idx].cover);
+    function togglePlay(ev){
+      ev.stopPropagation();
+      let audio=document.getElementById('fullAudio');
+      if(audio.paused) audio.play(); else audio.pause();
     }
-  }
-  if(e.key==="0"){ document.getElementById("mini-player").style.display="none"; }
-  if(e.key.toLowerCase()==="a"){ showFavorites(); }
-});
-</script>
+
+    function closeMini(ev){
+      ev.stopPropagation();
+      document.getElementById('miniPlayer').style.display='none';
+    }
+
+    function openFullPlayer(){
+      document.getElementById('fullPlayer').style.display='block';
+      document.getElementById('fullImg').src=current.img;
+      document.getElementById('fullTitle').innerText=current.title;
+      document.getElementById('fullDesc').innerText=current.desc;
+    }
+
+    function closeFull(){
+      document.getElementById('fullPlayer').style.display='none';
+    }
+
+    // Keypad shortcuts 1-9
+    document.addEventListener('keydown',e=>{
+      let num=parseInt(e.key);
+      if(num>=1 && num<=9){
+        let cards=document.querySelectorAll('.card');
+        if(cards[num-1]) cards[num-1].click();
+      }
+      if(e.key==='0'){ closeMini(e); closeFull(); }
+      if(e.key==='5'){ togglePlay(e); }
+    });
+  </script>
 </body>
 </html>
 """
 
-# ---------------- ROUTES ----------------
-@app.route("/")
+# ---------------- Routes ----------------
+@app.route("/", methods=["GET","POST"])
 def home():
-    return render_template_string(HTML)
+    if request.method=="POST":
+        rss=request.form.get("rss")
+        if rss: add_podcast(rss)
+        return redirect("/")
+    q=request.args.get("q")
+    results=[]
+    if q:
+        # iTunes search
+        r=requests.get("https://itunes.apple.com/search",
+                       params={"term":q,"media":"podcast","limit":10})
+        if r.ok:
+            data=r.json()
+            for it in data.get("results",[]):
+                results.append({
+                    "title":it.get("collectionName"),
+                    "image":it.get("artworkUrl100"),
+                    "rss":it.get("feedUrl")
+                })
+    podcasts=get_podcasts()
+    return render_template_string(TEMPLATE, podcasts=podcasts, results=results)
 
-@app.route("/api/search")
-def api_search():
-    q = request.args.get("q","")
-    url = f"https://itunes.apple.com/search?media=podcast&term={q}"
-    r = requests.get(url)
-    results = r.json().get("results",[])
-    out=[]
-    for it in results:
-        if not it.get("feedUrl"):
-            continue
-        out.append({
-            "title": it.get("collectionName"),
-            "rss": it.get("feedUrl"),
-            "cover": it.get("artworkUrl600")
-        })
-    return jsonify(out)
-
-@app.route("/api/play")
-def api_play():
-    rss = request.args.get("rss")
-    if not rss:
-        return jsonify({"error":"missing rss"})
-    feed = feedparser.parse(rss)
-    if not feed.entries:
-        return jsonify({"error":"no episodes"})
-    ep = feed.entries[0]
-    audio = ep.enclosures[0].href if ep.enclosures else None
-    return jsonify({
-        "title": ep.title,
-        "description": ep.get("summary",""),
-        "audio": audio,
-        "cover": feed.feed.get("image",{}).get("href")
-    })
-
-# ---------------- RUN ----------------
-if __name__ == "__main__":
+# ---------------- Run ----------------
+if __name__=="__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
