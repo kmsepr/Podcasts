@@ -1,17 +1,15 @@
-from flask import Flask, jsonify, render_template_string, request, redirect
+from flask import Flask, render_template_string, request, redirect
 import sqlite3, os, requests, feedparser
 
 app = Flask(__name__)
 
 # ---------------- Persistent DB ----------------
-DB_FILE = 'podcasts.db'  # local file in project folder
+DB_FILE = 'podcasts.db'
 os.makedirs(os.path.dirname(DB_FILE) or '.', exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-
-    # Podcasts table
     c.execute('''
         CREATE TABLE IF NOT EXISTS podcasts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -20,7 +18,6 @@ def init_db():
             cover TEXT
         )
     ''')
-
     conn.commit()
     conn.close()
 
@@ -42,12 +39,11 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
 .saved-item{background:white;color:black;border-radius:12px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,0.1);text-align:center;}
 .saved-item img{border-radius:8px;max-width:100px;margin-bottom:8px;}
 .saved-item b{display:block;font-size:16px;margin-bottom:6px;}
-.saved-item button{width:100%;padding:10px;font-size:16px;margin-top:6px;}
+.saved-item button{width:48%;padding:10px;font-size:16px;margin-top:6px;margin-right:4px;}
 .podcast{background:white;color:black;border-radius:12px;padding:12px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,0.1);}
 .podcast img{border-radius:8px;float:left;margin-right:10px;width:70px;}
 .podcast b{font-size:16px;}
 .podcast small{color:#555;display:block;margin-top:4px;}
-.podcast button{margin-top:6px;padding:6px 10px;font-size:16px;}
 .clear{clear:both;}
 </style>
 </head>
@@ -71,12 +67,6 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
       <img src="{{ r.cover }}">
       <b>{{ r.title }}</b>
       <small>{{ r.description }}</small>
-      <form method="post" action="/podcast">
-        <input type="hidden" name="title" value="{{ r.title }}">
-        <input type="hidden" name="rss" value="{{ r.rss }}">
-        <input type="hidden" name="cover" value="{{ r.cover }}">
-        <button type="submit">Add</button>
-      </form>
       <div class="clear"></div>
     </div>
   {% endfor %}
@@ -91,7 +81,12 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
       <div class="saved-item">
         {% if cover %}<img src="{{ cover }}">{% endif %}
         <b>{{ title }}</b>
-        <a href="/podcast/{{ pid }}"><button>Open</button></a>
+        <div>
+          <a href="/podcast/{{ pid }}"><button style="background:#4CAF50;color:white;">Open</button></a>
+          <form method="post" action="/podcast/delete/{{ pid }}" style="display:inline;">
+            <button type="submit" style="background:#dc2626;color:white;">Delete</button>
+          </form>
+        </div>
       </div>
     {% endfor %}
   </div>
@@ -155,11 +150,12 @@ def podcast_search():
         title=request.form.get("title")
         rss=request.form.get("rss")
         cover=request.form.get("cover")
-        if rss:  # only save if RSS exists
+        if rss:  # save only if RSS exists
             conn=sqlite3.connect(DB_FILE)
             c=conn.cursor()
             c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
-            conn.commit(); conn.close()
+            conn.commit()
+            conn.close()
         return redirect("/podcast")
 
     query = request.args.get("q")
@@ -182,9 +178,11 @@ def podcast_search():
 
 @app.route("/podcast/<int:pid>")
 def podcast_detail(pid):
-    conn=sqlite3.connect(DB_FILE); c=conn.cursor()
+    conn=sqlite3.connect(DB_FILE)
+    c=conn.cursor()
     c.execute("SELECT title,rss,cover FROM podcasts WHERE id=?",(pid,))
-    r=c.fetchone(); conn.close()
+    r=c.fetchone()
+    conn.close()
     if not r: return "Not found",404
     title,rss,cover=r
     feed=feedparser.parse(rss)
@@ -203,6 +201,15 @@ def podcast_detail(pid):
                 'description':entry.get('summary','')
             }
     return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,latest=latest)
+
+@app.route("/podcast/delete/<int:pid>", methods=["POST"])
+def podcast_delete(pid):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM podcasts WHERE id=?", (pid,))
+    conn.commit()
+    conn.close()
+    return redirect("/podcast")
 
 # ---------------- Run App ----------------
 if __name__ == '__main__':
