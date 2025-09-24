@@ -1,38 +1,17 @@
 from flask import Flask, jsonify, render_template_string, request, redirect
 import sqlite3, os, requests, feedparser
-from datetime import datetime
-import pytz
 
 app = Flask(__name__)
 
 # ---------------- Persistent DB ----------------
-DB_FILE = 'podcasts.db'  # local file in project folder for persistence
+DB_FILE = 'podcasts.db'  # local file in project folder
 os.makedirs(os.path.dirname(DB_FILE) or '.', exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    # Swalath total (single row)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS swalath_total (
-            id INTEGER PRIMARY KEY CHECK(id=1),
-            total INTEGER DEFAULT 0,
-            last_added TEXT
-        )
-    ''')
-    c.execute('INSERT INTO swalath_total (id,total,last_added) SELECT 1,0,NULL WHERE NOT EXISTS (SELECT 1 FROM swalath_total)')
-
-    # Swalath entries
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS swalath_entries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            number INTEGER,
-            added_at TEXT
-        )
-    ''')
-
-    # Podcasts
+    # Podcasts table
     c.execute('''
         CREATE TABLE IF NOT EXISTS podcasts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,30 +27,6 @@ def init_db():
 init_db()
 
 # ---------------- HTML Templates ----------------
-HOME_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Home</title>
-<style>
-body{font-family:sans-serif;margin:0;padding:0;background:#f7f7f7;color:#333}
-.container{max-width:500px;margin:0 auto;padding:10px;display:grid;grid-template-columns:1fr;gap:12px}
-.card{background:#fff;padding:20px;border-radius:12px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.1);cursor:pointer;font-size:20px;font-weight:bold}
-.card:hover{box-shadow:0 4px 10px rgba(0,0,0,0.2)}
-.orange{background:#f97316;color:white}
-.red{background:#dc2626;color:white}
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="card red" onclick="window.open('http://capitalist-anthe-pscj-4a28f285.koyeb.app/','_blank')">📺 YouTube Live</div>
-  <div class="card orange" onclick="location.href='/podcast'">🎙️ Podcasts</div>
-</div>
-</body>
-</html>
-"""
-
 PODCAST_GRID_HTML = """
 <!DOCTYPE html>
 <html>
@@ -189,70 +144,22 @@ def get_podcasts():
     conn.close()
     return rows
 
-# ---------------- Swalath APIs ----------------
-@app.route('/swalath')
-def swalath_page():
-    return render_template_string(SWALATH_HTML)
+# ---------------- Podcast Routes ----------------
+@app.route("/", methods=["GET"])
+def home():
+    return redirect("/podcast")
 
-@app.route('/api/swalath/total')
-def get_total_swalath():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT total,last_added FROM swalath_total WHERE id=1')
-    total,last_added = c.fetchone()
-    conn.close()
-    return jsonify({'total':total,'last_added':last_added})
-
-@app.route('/api/swalath/add', methods=['POST'])
-def add_swalath():
-    data = request.json
-    number = data.get('number',0)
-    try: number=int(number); assert number>0
-    except: return jsonify({'error':'Enter positive number'}),400
-    now = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('INSERT INTO swalath_entries (number,added_at) VALUES (?,?)',(number,now))
-    c.execute('UPDATE swalath_total SET total=total+?,last_added=? WHERE id=1',(number,now))
-    conn.commit()
-    c.execute('SELECT total,last_added FROM swalath_total WHERE id=1')
-    total,last_added=c.fetchone()
-    conn.close()
-    return jsonify({'total':total,'last_added':last_added})
-
-@app.route('/api/swalath/entries')
-def get_swalath_entries():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT id,number,added_at FROM swalath_entries ORDER BY id DESC')
-    rows=[dict(zip(['id','number','added_at'],r)) for r in c.fetchall()]
-    conn.close()
-    return jsonify(rows)
-
-@app.route('/api/swalath/delete/<int:eid>',methods=['POST'])
-def delete_swalath_entry(eid):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT number FROM swalath_entries WHERE id=?',(eid,))
-    r=c.fetchone()
-    if not r: conn.close(); return jsonify({'error':'Entry not found'}),404
-    number=r[0]
-    c.execute('DELETE FROM swalath_entries WHERE id=?',(eid,))
-    c.execute('UPDATE swalath_total SET total=total-? WHERE id=1',(number,))
-    conn.commit(); conn.close()
-    return jsonify({'message':'Deleted'})
-
-# ---------------- Podcast APIs ----------------
 @app.route("/podcast", methods=["GET","POST"])
 def podcast_search():
     if request.method=="POST":
         title=request.form.get("title")
         rss=request.form.get("rss")
         cover=request.form.get("cover")
-        conn=sqlite3.connect(DB_FILE)
-        c=conn.cursor()
-        c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
-        conn.commit(); conn.close()
+        if rss:  # only save if RSS exists
+            conn=sqlite3.connect(DB_FILE)
+            c=conn.cursor()
+            c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
+            conn.commit(); conn.close()
         return redirect("/podcast")
 
     query = request.args.get("q")
@@ -297,10 +204,6 @@ def podcast_detail(pid):
             }
     return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,latest=latest)
 
-# ---------------- Homepage ----------------
-@app.route("/")
-def home():
-    return render_template_string(HOME_HTML)
-
+# ---------------- Run App ----------------
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
