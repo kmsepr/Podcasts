@@ -81,13 +81,9 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
           <button type="submit" style="background:#dc2626;color:white;border:none;padding:6px 12px;border-radius:6px;">Delete</button>
         </form>
       </div>
-      <!-- hidden player -->
+      <!-- hidden audio element -->
       {% if latest_episodes.get(pid) %}
-        <audio id="player-{{ pid }}" class="hidden-player" src="{{ latest_episodes[pid][0]['audio_url'] }}"></audio>
-        <script>
-        allEpisodes[{{ pid }}] = {{ latest_episodes[pid]|tojson }};
-        allEpisodes[{{ pid }}].current = 0;
-        </script>
+        <audio id="player-{{ pid }}" class="hidden-player"></audio>
       {% endif %}
     {% endfor %}
   </div>
@@ -95,7 +91,7 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
 {% endif %}
 
 <script>
-let allEpisodes = {};
+let allEpisodes = {{ latest_episodes|tojson }};
 let currentPid = null;
 
 function loadEpisode(pid,index){
