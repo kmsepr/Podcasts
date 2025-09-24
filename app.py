@@ -1,246 +1,164 @@
-from flask import Flask, render_template_string, request, redirect
-import sqlite3, os, requests, feedparser
+from flask import Flask, render_template_string, request, jsonify
+import requests, feedparser
 
 app = Flask(__name__)
 
-DB_FILE = 'podcasts.db'
-os.makedirs(os.path.dirname(DB_FILE) or '.', exist_ok=True)
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS podcasts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            rss TEXT UNIQUE,
-            cover TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_db()
-
+# ---------------- HTML TEMPLATE ----------------
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Podcasts</title>
-<style>
-body{font-family:sans-serif;background:#f8f9fa;margin:0;padding:0;}
-h3{margin:10px 0;}
-.container{padding:10px;}
+  <meta charset="utf-8">
+  <title>Podcasts</title>
+  <style>
+    body { font-family: sans-serif; margin:0; padding:0; background:#f9f9f9; }
+    header { padding:10px; background:#333; color:#fff; text-align:center; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; padding:10px; }
+    .card { background:#fff; border-radius:10px; padding:10px; text-align:center; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2); }
+    .card img { width:100%; border-radius:8px; }
+    form { padding:10px; text-align:center; }
+    input[type=text] { padding:8px; width:70%; }
+    button { padding:8px 12px; margin:5px; cursor:pointer; }
 
-.searchbox input, .searchbox button{
-  width:100%;padding:10px;margin:6px 0;font-size:18px;
-  border-radius:6px;box-sizing:border-box;
-}
+    /* Mini player */
+    .mini-player { position:fixed; bottom:0; left:0; right:0; background:#222; color:#fff; padding:8px; display:none; }
+    #mini-title { font-size:14px; font-weight:bold; display:block; }
+    #mini-description { white-space:nowrap; overflow:hidden; }
+    #mini-description span { display:inline-block; padding-left:100%; animation:scroll-left 20s linear infinite; }
+    @keyframes scroll-left { 0%{transform:translateX(100%);} 100%{transform:translateX(-100%);} }
+    audio { width:100%; margin-top:5px; }
 
-.result-item, .saved-item{
-  background:white;border-radius:12px;padding:12px;margin:8px 0;
-  box-shadow:0 2px 6px rgba(0,0,0,0.1);font-size:18px;
-}
-.result-item img, .saved-item img{
-  max-width:100px;border-radius:8px;display:block;margin-bottom:6px;
-}
-.result-item b, .saved-item b{display:block;margin-bottom:4px;}
-
-#mini-player{
-  position:fixed;bottom:0;left:0;right:0;background:#111;color:white;
-  padding:10px;display:none;align-items:center;gap:10px;font-size:16px;
-}
-#mini-player img{width:50px;height:50px;object-fit:cover;border-radius:6px;}
-.scroll-text{overflow:hidden;white-space:nowrap;flex:1;}
-.scroll-text span{display:inline-block;padding-left:100%;animation:scroll 12s linear infinite;}
-@keyframes scroll{0%{transform:translateX(0);}100%{transform:translateX(-100%);}}
-
-#full-player{
-  position:fixed;top:0;left:0;right:0;bottom:0;background:#222;color:white;
-  display:none;flex-direction:column;align-items:center;padding:15px;overflow:auto;
-}
-#full-player img{max-width:80%;border-radius:12px;margin:15px 0;}
-#full-title{font-size:22px;text-align:center;margin:10px 0;}
-#full-desc{font-size:18px;line-height:1.4;text-align:center;
-  white-space:nowrap;overflow:hidden;}
-#full-desc span{display:inline-block;padding-left:100%;animation:scroll 20s linear infinite;}
-
-.controls button{
-  font-size:22px;margin:8px;padding:10px 20px;border-radius:8px;
-}
-</style>
+    /* Full player */
+    #full-player { display:none; padding:20px; text-align:center; }
+    #full-cover { max-width:90%; border-radius:12px; }
+    #full-title { font-size:18px; margin:10px 0; }
+    #full-desc { font-size:14px; text-align:left; max-height:150px; overflow:auto; background:#f0f0f0; padding:10px; border-radius:8px; }
+  </style>
 </head>
 <body>
-<div class="container">
-  <h2>🎙️ Podcasts</h2>
+  <header><h2>Podcast Player</h2></header>
+  <form onsubmit="searchPodcasts(); return false;">
+    <input type="text" id="q" placeholder="Search podcast...">
+    <button type="submit">Search</button>
+  </form>
 
-  <div class="searchbox">
-    <form method="get" action="/">
-      <input type="text" name="q" placeholder="Search podcasts..." value="{{ request.args.get('q','') }}">
-      <button type="submit">Search</button>
-    </form>
+  <div class="grid" id="results"></div>
+
+  <!-- Mini Player -->
+  <div class="mini-player" id="mini-player" onclick="openFullPlayer()">
+    <span id="mini-title"></span>
+    <div id="mini-description"><span id="mini-desc-text"></span></div>
+    <audio id="mini-audio" controls></audio>
   </div>
 
-  {% if results %}
-    <h3>Search Results</h3>
-    {% for r in results %}
-      <div class="result-item">
-        <img src="{{ r.cover }}">
-        <b>[{{ loop.index }}] {{ r.title }}</b>
-        <a href="/add?title={{ r.title }}&rss={{ r.rss }}&cover={{ r.cover }}">
-          <button type="button">➕ Add</button>
-        </a>
-      </div>
-    {% endfor %}
-  {% endif %}
-
-  {% if saved %}
-    <h3>Saved Podcasts</h3>
-    {% for pid,title,rss,cover in saved %}
-      <div class="saved-item" onclick="startPodcast({{ pid }})">
-        {% if cover %}<img src="{{ cover }}">{% endif %}
-        <b>[{{ loop.index }}] {{ title }}</b>
-      </div>
-      <audio id="player-{{ pid }}" class="hidden-player"></audio>
-    {% endfor %}
-  {% endif %}
-</div>
-
-<!-- Mini player -->
-<div id="mini-player" onclick="openFullPlayer()">
-  <img id="mini-cover" src="">
-  <div class="scroll-text"><span id="mini-title"></span></div>
-  <button onclick="togglePlay(currentPid);event.stopPropagation();">⏯</button>
-  <button onclick="closeMiniPlayer();event.stopPropagation();">❌</button>
-</div>
-
-<!-- Full player -->
-<div id="full-player">
-  <img id="full-cover" src="">
-  <div id="full-title"></div>
-  <div id="full-desc"><span></span></div>
-  <div class="controls">
-    <button onclick="prevEpisode(currentPid)">⏮ (4)</button>
-    <button onclick="togglePlay(currentPid)">⏯ (5)</button>
-    <button onclick="nextEpisode(currentPid)">⏭ (6)</button>
-    <button onclick="closeFullPlayer()">❌ (0)</button>
+  <!-- Full Player -->
+  <div id="full-player">
+    <img id="full-cover" src="">
+    <h2 id="full-title"></h2>
+    <p id="full-desc"></p>
+    <audio id="full-audio" controls></audio>
+    <br><button onclick="closeFullPlayer()">Close</button>
   </div>
-</div>
 
 <script>
-let allEpisodes={{ latest_episodes|tojson }};
-let currentPid=null;
+let podcasts = [];
+let currentEpisode = null;
 
-function loadEpisode(pid,index){
-  let player=document.getElementById("player-"+pid);
-  let ep=allEpisodes[pid][index];
-  allEpisodes[pid].current=index;
-  player.src=ep.audio_url;
-  player.play();
-  currentPid=pid;
-
-  // mini player
-  document.getElementById("mini-player").style.display="flex";
-  document.getElementById("mini-cover").src=ep.cover||"";
-  document.getElementById("mini-title").textContent=ep.title+" - "+ep.pub_date;
-
-  // full player
-  document.getElementById("full-cover").src=ep.cover||"";
-  document.getElementById("full-title").textContent=ep.title;
-  document.querySelector("#full-desc span").textContent=ep.description||"";
+async function searchPodcasts(){
+  let q = document.getElementById("q").value;
+  let res = await fetch("/api/search?q="+encodeURIComponent(q));
+  let data = await res.json();
+  podcasts = data;
+  let grid = document.getElementById("results");
+  grid.innerHTML = "";
+  data.forEach((p,i)=>{
+    let card = document.createElement("div");
+    card.className="card";
+    card.innerHTML = "<img src='"+p.cover+"'><br>"+p.title+
+      "<br><button onclick='playPodcast("+i+")'>Play</button>";
+    grid.appendChild(card);
+  });
 }
 
-function startPodcast(pid){if(!allEpisodes[pid])return;loadEpisode(pid,0);}
-function nextEpisode(pid){let eps=allEpisodes[pid];let i=(eps.current+1)%eps.length;loadEpisode(pid,i);}
-function prevEpisode(pid){let eps=allEpisodes[pid];let i=(eps.current-1+eps.length)%eps.length;loadEpisode(pid,i);}
-function togglePlay(pid){let p=document.getElementById("player-"+pid);if(p.paused)p.play();else p.pause();}
-function closeMiniPlayer(){document.getElementById("mini-player").style.display="none";currentPid=null;}
-function openFullPlayer(){document.getElementById("full-player").style.display="flex";}
-function closeFullPlayer(){document.getElementById("full-player").style.display="none";}
+async function playPodcast(i){
+  let p = podcasts[i];
+  let res = await fetch("/api/play?rss="+encodeURIComponent(p.rss));
+  let ep = await res.json();
+  if(ep.error){ alert(ep.error); return; }
+  currentEpisode = ep;
 
-document.addEventListener("keydown",e=>{
-  if(currentPid==null){
-    let num=parseInt(e.key);
-    if(num && num<=Object.keys(allEpisodes).length){
-      let pid=Object.keys(allEpisodes)[num-1];
-      startPodcast(pid);
-    }
-    return;
+  document.getElementById("mini-player").style.display="block";
+  document.getElementById("mini-title").innerText = ep.title;
+  document.getElementById("mini-desc-text").innerText = ep.description;
+  let audio = document.getElementById("mini-audio");
+  audio.src = ep.audio;
+  audio.play();
+}
+
+function openFullPlayer(){
+  if(!currentEpisode) return;
+  document.getElementById("full-cover").src = currentEpisode.cover || "";
+  document.getElementById("full-title").innerText = currentEpisode.title;
+  document.getElementById("full-desc").innerText = currentEpisode.description;
+  document.getElementById("full-audio").src = currentEpisode.audio;
+  document.getElementById("full-audio").play();
+  document.getElementById("full-player").style.display="block";
+}
+
+function closeFullPlayer(){
+  document.getElementById("full-player").style.display="none";
+}
+
+// Keypad controls
+document.addEventListener("keydown", e=>{
+  if(e.key>="1" && e.key<="9"){
+    let idx = parseInt(e.key)-1;
+    if(idx<podcasts.length){ playPodcast(idx); }
   }
-  switch(e.key){
-    case "4": prevEpisode(currentPid);break;
-    case "5": togglePlay(currentPid);break;
-    case "6": nextEpisode(currentPid);break;
-    case "0": closeMiniPlayer();closeFullPlayer();break;
-  }
+  if(e.key==="0"){ document.getElementById("mini-player").style.display="none"; }
 });
 </script>
 </body>
 </html>
 """
 
-def get_podcasts():
-    conn=sqlite3.connect(DB_FILE);c=conn.cursor()
-    c.execute("SELECT id,title,rss,cover FROM podcasts ORDER BY id DESC")
-    rows=c.fetchall();conn.close();return rows
-
-def get_latest_episodes(podcasts,limit=5):
-    data={}
-    for pid,title,rss,cover in podcasts:
-        episodes=[]
-        try:
-            feed=feedparser.parse(rss)
-            for entry in feed.entries[:limit]:
-                audio=""
-                for enc in entry.get("enclosures",[]):
-                    if enc.get("href","").startswith("http"):audio=enc["href"];break
-                if audio:
-                    episodes.append({
-                        "title":entry.get("title",""),
-                        "pub_date":entry.get("published",""),
-                        "audio_url":audio,
-                        "description":entry.get("summary",""),
-                        "cover":cover
-                    })
-            if episodes:data[pid]=episodes
-        except:pass
-    return data
-
+# ---------------- ROUTES ----------------
 @app.route("/")
 def home():
-    query=request.args.get("q");results=[]
-    if query:
-        url=f"https://itunes.apple.com/search?media=podcast&term={query}"
-        try:
-            r=requests.get(url,timeout=10).json()
-            for item in r.get("results",[]):
-                if not item.get("feedUrl"):continue
-                results.append({
-                    "title":item.get("collectionName"),
-                    "rss":item.get("feedUrl"),
-                    "cover":item.get("artworkUrl100")
-                })
-        except:pass
-    saved=get_podcasts()
-    latest=get_latest_episodes(saved)
-    return render_template_string(HTML,results=results,saved=saved,latest_episodes=latest)
+    return render_template_string(HTML)
 
-@app.route("/add")
-def add_podcast():
-    title=request.args.get("title");rss=request.args.get("rss");cover=request.args.get("cover")
-    if rss:
-        conn=sqlite3.connect(DB_FILE);c=conn.cursor()
-        try:c.execute("INSERT INTO podcasts(title,rss,cover) VALUES(?,?,?)",(title,rss,cover));conn.commit()
-        except sqlite3.IntegrityError:pass
-        conn.close()
-    return redirect("/")
+@app.route("/api/search")
+def api_search():
+    q = request.args.get("q","")
+    url = f"https://itunes.apple.com/search?media=podcast&term={q}"
+    r = requests.get(url)
+    results = r.json().get("results",[])
+    out=[]
+    for it in results:
+        out.append({
+            "title": it.get("collectionName"),
+            "rss": it.get("feedUrl"),
+            "cover": it.get("artworkUrl600")
+        })
+    return jsonify(out)
 
-@app.route("/podcast/delete/<int:pid>",methods=["POST"])
-def podcast_delete(pid):
-    conn=sqlite3.connect(DB_FILE);c=conn.cursor()
-    c.execute("DELETE FROM podcasts WHERE id=?",(pid,));conn.commit();conn.close()
-    return redirect("/")
+@app.route("/api/play")
+def api_play():
+    rss = request.args.get("rss")
+    if not rss:
+        return jsonify({"error":"missing rss"})
+    feed = feedparser.parse(rss)
+    if not feed.entries:
+        return jsonify({"error":"no episodes"})
+    ep = feed.entries[0]
+    audio = ep.enclosures[0].href if ep.enclosures else None
+    return jsonify({
+        "title": ep.title,
+        "description": ep.get("summary",""),
+        "audio": audio,
+        "cover": feed.feed.get("image",{}).get("href")
+    })
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0",port=5000,debug=True)
+# ---------------- RUN ----------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
