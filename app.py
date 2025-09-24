@@ -40,6 +40,7 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
 .saved-item img{border-radius:8px;max-width:100px;margin-bottom:8px;}
 .saved-item b{display:block;font-size:16px;margin-bottom:6px;}
 .saved-item button{width:48%;padding:10px;font-size:16px;margin-top:6px;margin-right:4px;}
+.saved-item audio{width:100%;margin-top:6px;}
 .podcast{background:white;color:black;border-radius:12px;padding:12px;margin:10px 0;box-shadow:0 2px 6px rgba(0,0,0,0.1);}
 .podcast img{border-radius:8px;float:left;margin-right:10px;width:70px;}
 .podcast b{font-size:16px;}
@@ -110,22 +111,64 @@ audio{width:100%;margin-top:10px;}
 h2{margin:10px 0;font-size:20px;}
 h3{font-size:18px;margin:6px 0;}
 .description{font-size:14px;color:#555;margin-top:8px;}
-button{padding:10px 12px;font-size:16px;border-radius:6px;margin-top:6px;}
+button{padding:10px 12px;font-size:16px;border-radius:6px;margin-top:6px;margin-right:4px;}
 </style>
 </head>
 <body>
 <div class="card">
   {% if cover %}<img class="cover" src="{{ cover }}">{% endif %}
   <h2>{{ title }}</h2>
-  {% if latest %}
-    <h3>{{ latest.title }}</h3>
-    <small>{{ latest.pub_date }}</small>
-    <div class="description">{{ latest.description|safe }}</div>
-    <audio controls src="{{ latest.audio_url }}"></audio>
+  {% if episodes %}
+    <h3 id="episode-title">{{ episodes[0].title }}</h3>
+    <small id="episode-date">{{ episodes[0].pub_date }}</small>
+    <div class="description" id="episode-desc">{{ episodes[0].description|safe }}</div>
+    <audio id="player" controls autoplay src="{{ episodes[0].audio_url }}"></audio>
+    <div style="margin-top:10px;">
+      <button onclick="prevEpisode()">⏮ Previous</button>
+      <button onclick="nextEpisode()">⏭ Next</button>
+      <button onclick="togglePlayPause()" id="playPauseBtn">⏸ Pause</button>
+    </div>
   {% else %}
     <p>No episodes found.</p>
   {% endif %}
 </div>
+
+<script>
+let episodes = {{ episodes|tojson }};
+let current = 0;
+let player = document.getElementById("player");
+let playPauseBtn = document.getElementById("playPauseBtn");
+
+function loadEpisode(index){
+    current = index;
+    document.getElementById("episode-title").innerText = episodes[index].title;
+    document.getElementById("episode-date").innerText = episodes[index].pub_date;
+    document.getElementById("episode-desc").innerHTML = episodes[index].description;
+    player.src = episodes[index].audio_url;
+    player.play();
+    playPauseBtn.innerText = "⏸ Pause";
+}
+
+function nextEpisode(){
+    let next = (current + 1) % episodes.length;
+    loadEpisode(next);
+}
+
+function prevEpisode(){
+    let prev = (current - 1 + episodes.length) % episodes.length;
+    loadEpisode(prev);
+}
+
+function togglePlayPause(){
+    if(player.paused){
+        player.play();
+        playPauseBtn.innerText = "⏸ Pause";
+    } else {
+        player.pause();
+        playPauseBtn.innerText = "▶ Play";
+    }
+}
+</script>
 </body>
 </html>
 """
@@ -150,7 +193,7 @@ def podcast_search():
         title=request.form.get("title")
         rss=request.form.get("rss")
         cover=request.form.get("cover")
-        if rss:  # save only if RSS exists
+        if rss:
             conn=sqlite3.connect(DB_FILE)
             c=conn.cursor()
             c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
@@ -173,6 +216,7 @@ def podcast_search():
                 })
         except:
             pass
+
     saved = get_podcasts()
     return render_template_string(PODCAST_GRID_HTML, results=results, saved=saved)
 
@@ -185,22 +229,24 @@ def podcast_detail(pid):
     conn.close()
     if not r: return "Not found",404
     title,rss,cover=r
-    feed=feedparser.parse(rss)
-    latest=None
-    if feed.entries:
-        entry=feed.entries[0]
+
+    feed = feedparser.parse(rss)
+    episodes = []
+    for entry in feed.entries[:10]:  # take first 10 episodes
         audio=''
         for enc in entry.get('enclosures',[]):
             if enc.get('href','').startswith('http'):
-                audio=enc['href']; break
+                audio = enc['href']
+                break
         if audio:
-            latest={
-                'title':entry.get('title',''),
-                'pub_date':entry.get('published',''),
-                'audio_url':audio,
-                'description':entry.get('summary','')
-            }
-    return render_template_string(PODCAST_DETAIL_HTML,title=title,cover=cover,latest=latest)
+            episodes.append({
+                'title': entry.get('title',''),
+                'pub_date': entry.get('published',''),
+                'audio_url': audio,
+                'description': entry.get('summary','')
+            })
+
+    return render_template_string(PODCAST_DETAIL_HTML, title=title, cover=cover, episodes=episodes)
 
 @app.route("/podcast/delete/<int:pid>", methods=["POST"])
 def podcast_delete(pid):
