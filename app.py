@@ -24,7 +24,7 @@ def init_db():
 
 init_db()
 
-# ---------------- HTML Templates ----------------
+# ---------------- HTML Template ----------------
 PODCAST_GRID_HTML = """
 <!DOCTYPE html>
 <html>
@@ -52,7 +52,7 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
 </div>
 
 <div class="searchbox">
-  <form method="get" action="/podcast">
+  <form method="get" action="/">
     <input type="text" name="q" placeholder="Search podcasts..." value="{{ request.args.get('q','') }}">
     <button type="submit">Search</button>
   </form>
@@ -66,7 +66,7 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
       <img src="{{ r.cover }}">
       <b>{{ r.title }}</b><br>
       <small>{{ r.description }}</small><br>
-      <form method="post" action="/podcast">
+      <form method="post" action="/">
         <input type="hidden" name="title" value="{{ r.title }}">
         <input type="hidden" name="rss" value="{{ r.rss }}">
         <input type="hidden" name="cover" value="{{ r.cover }}">
@@ -187,13 +187,9 @@ def get_latest_episodes(podcasts, limit=5):
             pass
     return latest_episodes
 
-# ---------------- Podcast Routes ----------------
-@app.route("/", methods=["GET"])
+# ---------------- Home (Main Page) ----------------
+@app.route("/", methods=["GET","POST"])
 def home():
-    return redirect("/podcast")
-
-@app.route("/podcast", methods=["GET","POST"])
-def podcast_search():
     if request.method=="POST":
         title=request.form.get("title")
         rss=request.form.get("rss")
@@ -204,7 +200,7 @@ def podcast_search():
             c.execute("INSERT INTO podcasts (title,rss,cover) VALUES (?,?,?)",(title,rss,cover))
             conn.commit()
             conn.close()
-        return redirect("/podcast")
+        return redirect("/")
 
     query = request.args.get("q")
     results = []
@@ -226,6 +222,7 @@ def podcast_search():
     latest_episodes = get_latest_episodes(saved)
     return render_template_string(PODCAST_GRID_HTML, results=results, saved=saved, latest_episodes=latest_episodes)
 
+# ---------------- Podcast Detail ----------------
 @app.route("/podcast/<int:pid>")
 def podcast_detail(pid):
     conn=sqlite3.connect(DB_FILE)
@@ -254,6 +251,7 @@ def podcast_detail(pid):
 
     return render_template_string(PODCAST_GRID_HTML, results=[], saved=[(pid, title, rss, cover)], latest_episodes={pid: episodes})
 
+# ---------------- Delete Podcast ----------------
 @app.route("/podcast/delete/<int:pid>", methods=["POST"])
 def podcast_delete(pid):
     conn = sqlite3.connect(DB_FILE)
@@ -261,7 +259,7 @@ def podcast_delete(pid):
     c.execute("DELETE FROM podcasts WHERE id=?", (pid,))
     conn.commit()
     conn.close()
-    return redirect("/podcast")
+    return redirect("/")
 
 # ---------------- Run App ----------------
 if __name__ == '__main__':
