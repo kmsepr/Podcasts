@@ -31,7 +31,7 @@ PODCAST_GRID_HTML = """
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Podcasts</title>
 <style>
-body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
+body{font-family:sans-serif;padding:10px;background:#f8f9fa;margin:0;}
 .grid{display:grid;gap:12px;}
 .card{border-radius:12px;padding:20px;color:white;text-align:center;font-size:18px;background:#f97316;}
 .searchbox input, .searchbox button{width:100%;padding:10px;margin:6px 0;font-size:18px;border-radius:6px;box-sizing:border-box;}
@@ -39,7 +39,9 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
 .saved-item{background:white;color:black;border-radius:12px;padding:12px;box-shadow:0 2px 6px rgba(0,0,0,0.1);text-align:center;cursor:pointer;}
 .saved-item img{border-radius:8px;max-width:100px;margin-bottom:8px;}
 .saved-item b{display:block;font-size:16px;margin-bottom:6px;}
-.hidden-player{display:none;}
+#playerbar{position:fixed;bottom:0;left:0;right:0;background:#222;color:white;padding:8px;display:none;}
+#playerbar b{display:block;margin-bottom:4px;}
+audio{width:100%;}
 </style>
 </head>
 <body>
@@ -81,25 +83,28 @@ body{font-family:sans-serif;padding:10px;background:#f8f9fa;}
           <button type="submit" style="background:#dc2626;color:white;border:none;padding:6px 12px;border-radius:6px;">Delete</button>
         </form>
       </div>
-      <!-- hidden audio element -->
-      {% if latest_episodes.get(pid) %}
-        <audio id="player-{{ pid }}" class="hidden-player"></audio>
-      {% endif %}
     {% endfor %}
   </div>
 </div>
 {% endif %}
+
+<!-- Sticky Player -->
+<div id="playerbar">
+  <b id="nowTitle"></b>
+  <audio id="audio" controls autoplay></audio>
+</div>
 
 <script>
 let allEpisodes = {{ latest_episodes|tojson }};
 let currentPid = null;
 
 function loadEpisode(pid,index){
-  let player = document.getElementById("player-" + pid);
   let ep = allEpisodes[pid][index];
   allEpisodes[pid].current = index;
-  player.src = ep.audio_url;
-  player.play();
+  document.getElementById("nowTitle").innerText = ep.title;
+  document.getElementById("audio").src = ep.audio_url;
+  document.getElementById("playerbar").style.display = 'block';
+  document.getElementById("audio").play();
   currentPid = pid;
 }
 
@@ -121,7 +126,7 @@ function prevEpisode(pid){
 }
 
 function togglePlay(pid){
-  let player = document.getElementById("player-" + pid);
+  let player = document.getElementById("audio");
   if(player.paused){ player.play(); }
   else { player.pause(); }
 }
