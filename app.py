@@ -78,7 +78,7 @@ HTML = """
     <button onclick="prevEpisode()">⏮</button>
     <button onclick="togglePlay()">⏯</button>
     <button onclick="nextEpisode()">⏭</button>
-    <button onclick="closeFull()">❌</button>
+    <button onclick="toggleFullPlayer()">❌</button>
   </div>
 </div>
 
@@ -144,15 +144,23 @@ function startEpisode(){
 }
 
 function toggleFullPlayer(){
-  document.getElementById('fullPlayer').style.display='flex';
+  let full = document.getElementById('fullPlayer');
+  let mini = document.getElementById('miniPlayer');
+  if(full.style.display === 'flex'){
+    full.style.display = 'none';
+    mini.style.display = 'block';
+  } else {
+    full.style.display = 'flex';
+    mini.style.display = 'none';
+  }
 }
-function closeFull(){
-  document.getElementById('fullPlayer').style.display='none';
-}
+
 function closeMini(){
   document.getElementById('miniPlayer').style.display='none';
+  document.getElementById('fullPlayer').style.display='none';
   document.getElementById('player').pause();
 }
+
 function togglePlay(){
   let p=document.getElementById('player');
   if(p.paused) p.play(); else p.pause();
@@ -170,7 +178,8 @@ document.addEventListener('keydown',function(e){
     case "5": togglePlay(); break;
     case "2": prevEpisode(); break;
     case "8": nextEpisode(); break;
-    case "0": closeMini(); closeFull(); break;
+    case "1": toggleFullPlayer(); break; // keypad 1 toggles mini/full
+    case "0": closeMini(); break;
   }
 });
 
