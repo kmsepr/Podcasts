@@ -59,15 +59,6 @@ button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6p
   <button type="submit">Search</button>
 </form>
 
-<!-- Manual RSS Add -->
-<h3>Add by RSS URL</h3>
-<form onsubmit="addByRSS(); return false;">
-  <input type="text" id="rssInput" placeholder="Paste RSS feed URL">
-  <input type="text" id="rssTitle" placeholder="Optional title">
-  <input type="text" id="rssCover" placeholder="Optional cover URL">
-  <button type="submit">Add RSS</button>
-</form>
-
 <h2>⭐ Favorites</h2>
 <div id="favorites"></div>
 
@@ -113,19 +104,8 @@ function searchPodcast(){
      });
      document.getElementById('results').innerHTML=out;
    }).catch(err=>{
-     document.getElementById('results').innerHTML="<p>Search failed, try manual RSS</p>";
+     document.getElementById('results').innerHTML="<p>Search failed, try later</p>";
    });
-}
-
-function addByRSS(){
-  let rss=document.getElementById('rssInput').value.trim();
-  if(!rss){ alert("RSS required"); return; }
-  let title=document.getElementById('rssTitle').value.trim() || rss;
-  let cover=document.getElementById('rssCover').value.trim() || "";
-  addFavorite({title,rss,cover});
-  document.getElementById('rssInput').value="";
-  document.getElementById('rssTitle').value="";
-  document.getElementById('rssCover').value="";
 }
 
 function loadFavorites(){
@@ -238,7 +218,7 @@ def search():
             })
         return jsonify(results)
     except:
-        return jsonify([])  # fallback if API fails
+        return jsonify([])
 
 @app.route("/api/add",methods=["POST"])
 def add():
