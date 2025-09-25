@@ -30,32 +30,42 @@ HTML = """
 <title>Podcast App</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-  body { font-family: sans-serif; background:#111; color:#eee; margin:0; text-align:center; }
-  h1 { font-size:22px; margin:10px 0; }
-  input[type=text] { width:70%; padding:8px; font-size:16px; }
-  button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6px; background:#28a; color:#fff; }
-  .podcast-card { background:#222; margin:8px; padding:10px; border-radius:8px; display:flex; align-items:center; }
-  .podcast-card img { width:80px; height:80px; border-radius:10px; margin-right:10px; }
-  .podcast-title { font-size:18px; margin:6px 0; flex:1; text-align:left; }
-  .mini-player { position:fixed; bottom:0; left:0; right:0; background:#333; padding:10px; display:none; }
-  .mini-player img { width:50px; height:50px; border-radius:8px; vertical-align:middle; margin-right:10px; }
-  .scroll-desc { white-space:nowrap; overflow:hidden; box-sizing:border-box; display:inline-block; vertical-align:middle; width:70%; }
-  .scroll-desc span { display:inline-block; padding-left:100%; animation: scroll 15s linear infinite; }
-  @keyframes scroll { 0%{transform:translateX(0);} 100%{transform:translateX(-100%);} }
-  .full-player { position:fixed; top:0; left:0; right:0; bottom:0; background:#000; color:#fff;
-                 display:none; flex-direction:column; align-items:center; justify-content:center; }
-  .full-player img { width:220px; height:220px; border-radius:12px; }
-  .controls { margin-top:15px; }
-  .controls button { font-size:20px; padding:12px; margin:6px; }
-  .big-text { font-size:20px; margin-top:10px; text-align:center; }
+body { font-family: sans-serif; background:#111; color:#eee; margin:0; text-align:center; }
+h1 { font-size:22px; margin:10px 0; }
+input[type=text] { width:70%; padding:8px; font-size:16px; }
+button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6px; background:#28a; color:#fff; }
+.podcast-card { background:#222; margin:8px; padding:10px; border-radius:8px; display:flex; align-items:center; }
+.podcast-card img { width:80px; height:80px; border-radius:10px; margin-right:10px; }
+.podcast-title { font-size:18px; margin:6px 0; flex:1; text-align:left; }
+.mini-player { position:fixed; bottom:0; left:0; right:0; background:#333; padding:10px; display:none; }
+.mini-player img { width:50px; height:50px; border-radius:8px; vertical-align:middle; margin-right:10px; }
+.scroll-desc { white-space:nowrap; overflow:hidden; box-sizing:border-box; display:inline-block; vertical-align:middle; width:70%; }
+.scroll-desc span { display:inline-block; padding-left:100%; animation: scroll 15s linear infinite; }
+@keyframes scroll { 0%{transform:translateX(0);} 100%{transform:translateX(-100%);} }
+.full-player { position:fixed; top:0; left:0; right:0; bottom:0; background:#000; color:#fff;
+               display:none; flex-direction:column; align-items:center; justify-content:center; }
+.full-player img { width:220px; height:220px; border-radius:12px; }
+.controls { margin-top:15px; }
+.controls button { font-size:20px; padding:12px; margin:6px; }
+.big-text { font-size:20px; margin-top:10px; text-align:center; }
 </style>
 </head>
 <body>
 <h1>🎧 Podcast App</h1>
 
+<!-- Search Form -->
 <form onsubmit="searchPodcast(); return false;">
   <input type="text" id="query" placeholder="Search podcasts...">
   <button type="submit">Search</button>
+</form>
+
+<!-- Manual RSS Add -->
+<h3>Add by RSS URL</h3>
+<form onsubmit="addByRSS(); return false;">
+  <input type="text" id="rssInput" placeholder="Paste RSS feed URL">
+  <input type="text" id="rssTitle" placeholder="Optional title">
+  <input type="text" id="rssCover" placeholder="Optional cover URL">
+  <button type="submit">Add RSS</button>
 </form>
 
 <h2>⭐ Favorites</h2>
@@ -93,6 +103,7 @@ function searchPodcast(){
   fetch('/api/search?q='+encodeURIComponent(q))
    .then(r=>r.json()).then(data=>{
      let out="";
+     if(data.length===0){ out="<p>No results or API quota reached</p>"; }
      data.forEach(p=>{
        out+=`<div class="podcast-card">
          <img src="${p.cover}">
@@ -101,7 +112,20 @@ function searchPodcast(){
        </div>`;
      });
      document.getElementById('results').innerHTML=out;
+   }).catch(err=>{
+     document.getElementById('results').innerHTML="<p>Search failed, try manual RSS</p>";
    });
+}
+
+function addByRSS(){
+  let rss=document.getElementById('rssInput').value.trim();
+  if(!rss){ alert("RSS required"); return; }
+  let title=document.getElementById('rssTitle').value.trim() || rss;
+  let cover=document.getElementById('rssCover').value.trim() || "";
+  addFavorite({title,rss,cover});
+  document.getElementById('rssInput').value="";
+  document.getElementById('rssTitle').value="";
+  document.getElementById('rssCover').value="";
 }
 
 function loadFavorites(){
@@ -139,7 +163,6 @@ function startEpisode(){
 
   // Mini player
   document.getElementById('miniPlayer').style.display='block';
-  document.getElementById('miniTitle')?.innerText=current.title;
   document.getElementById('miniDesc').innerText=ep.desc || "";
   document.getElementById('miniCover').src = ep.cover || current.cover;
 
@@ -203,16 +226,19 @@ def index():
 @app.route("/api/search")
 def search():
     q=request.args.get("q","")
-    url=f"https://itunes.apple.com/search?media=podcast&term={q}"
-    r=requests.get(url)
-    results=[]
-    for item in r.json().get("results",[]):
-        results.append({
-            "title": item.get("collectionName"),
-            "rss": item.get("feedUrl"),
-            "cover": item.get("artworkUrl600")
-        })
-    return jsonify(results)
+    try:
+        url=f"https://itunes.apple.com/search?media=podcast&term={q}"
+        r=requests.get(url, timeout=5)
+        results=[]
+        for item in r.json().get("results",[]):
+            results.append({
+                "title": item.get("collectionName"),
+                "rss": item.get("feedUrl"),
+                "cover": item.get("artworkUrl600")
+            })
+        return jsonify(results)
+    except:
+        return jsonify([])  # fallback if API fails
 
 @app.route("/api/add",methods=["POST"])
 def add():
@@ -246,14 +272,13 @@ def episodes():
         for link in e.get("links",[]):
             if link.get("type","").startswith("audio"):
                 audio=link["href"]
-        # get episode image if available
-        cover = None
+        cover=None
         if "image" in e:
-            cover = e.image.get("href")
+            cover=e.image.get("href")
         elif "itunes_image" in e:
-            cover = e.itunes_image
+            cover=e.itunes_image
         elif "media_thumbnail" in e:
-            cover = e.media_thumbnail[0]['url']
+            cover=e.media_thumbnail[0]['url']
         if audio:
             eps.append({
                 "title": e.get("title"),
