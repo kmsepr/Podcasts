@@ -28,27 +28,39 @@ HTML = """
 <head>
 <meta charset="utf-8">
 <title>Podcast App</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <style>
 body { font-family: sans-serif; background:#111; color:#eee; margin:0; text-align:center; }
-h1 { font-size:22px; margin:10px 0; }
-input[type=text] { width:70%; padding:8px; font-size:16px; }
-button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6px; background:#28a; color:#fff; }
-.podcast-card { background:#222; margin:8px; padding:10px; border-radius:8px; display:flex; align-items:center; }
-.podcast-card img { width:80px; height:80px; border-radius:10px; margin-right:10px; }
-.podcast-title { font-size:18px; margin:6px 0; flex:1; text-align:left; }
-.mini-player { position:fixed; bottom:0; left:0; right:0; background:#333; padding:10px; display:none; }
-.mini-player img { width:50px; height:50px; border-radius:8px; vertical-align:middle; margin-right:10px; }
-.scroll-desc { white-space:nowrap; overflow:hidden; box-sizing:border-box; display:inline-block; vertical-align:middle; width:70%; }
+h1 { font-size:20px; margin:8px 0; }
+input[type=text] { width:65%; padding:6px; font-size:14px; }
+button { padding:8px; margin:4px; font-size:14px; border:none; border-radius:6px; background:#28a; color:#fff; }
+h2 { font-size:18px; margin-top:12px; }
+
+.podcast-card { background:#222; margin:6px; padding:8px; border-radius:8px; display:flex; align-items:center; flex-wrap:wrap; }
+.podcast-card img { width:60px; height:60px; border-radius:8px; margin-right:8px; }
+.podcast-title { font-size:14px; flex:1; text-align:left; word-wrap:break-word; }
+
+.mini-player { position:fixed; bottom:0; left:0; right:0; background:#333; padding:6px; display:none; align-items:center; justify-content:space-between; }
+.mini-player img { width:40px; height:40px; border-radius:6px; margin-right:6px; }
+.scroll-desc { white-space:nowrap; overflow:hidden; box-sizing:border-box; display:inline-block; vertical-align:middle; width:55%; font-size:13px; }
 .scroll-desc span { display:inline-block; padding-left:100%; animation: scroll 15s linear infinite; }
 @keyframes scroll { 0%{transform:translateX(0);} 100%{transform:translateX(-100%);} }
+
 .full-player { position:fixed; top:0; left:0; right:0; bottom:0; background:#000; color:#fff;
-               display:none; flex-direction:column; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
-.full-player img { width:220px; height:220px; border-radius:12px; }
-.controls { margin-top:15px; }
-.controls button { font-size:20px; padding:12px; margin:6px; }
-.big-text { font-size:20px; margin-top:10px; text-align:center; }
-.desc-text { margin-top:15px; font-size:16px; text-align:left; max-width:90%; }
+               display:none; flex-direction:column; align-items:center; justify-content:flex-start;
+               overflow-y:auto; padding:10px; }
+.full-player img { width:160px; height:160px; border-radius:10px; margin-top:10px; }
+.controls { margin-top:10px; display:flex; flex-wrap:wrap; justify-content:center; }
+.controls button { font-size:16px; padding:8px; margin:4px; }
+.big-text { font-size:16px; margin-top:6px; text-align:center; }
+.desc-text { margin-top:10px; font-size:14px; text-align:left; max-width:95%; overflow-wrap:break-word; }
+
+@media (max-width:400px){
+  input[type=text]{width:60%; font-size:12px;}
+  .podcast-title{font-size:13px;}
+  .controls button{font-size:14px; padding:6px;}
+  .desc-text{font-size:13px;}
+}
 </style>
 </head>
 <body>
@@ -69,8 +81,10 @@ button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6p
 <div class="mini-player" id="miniPlayer">
   <img id="miniCover" src="">
   <div class="scroll-desc"><span id="miniTitle"></span></div>
-  <button onclick="toggleFullPlayer()">Open</button>
-  <button onclick="closeMini()">Close</button>
+  <div>
+    <button onclick="toggleFullPlayer()">🔼</button>
+    <button onclick="closeMini()">❌</button>
+  </div>
 </div>
 
 <div class="full-player" id="fullPlayer">
@@ -146,7 +160,7 @@ function startEpisode(){
   player.play();
 
   // Mini player (episode title only)
-  document.getElementById('miniPlayer').style.display='block';
+  document.getElementById('miniPlayer').style.display='flex';
   document.getElementById('miniTitle').innerText=ep.title || "";
   document.getElementById('miniCover').src = ep.cover || current.cover;
 
@@ -161,7 +175,7 @@ function toggleFullPlayer(){
   let mini = document.getElementById('miniPlayer');
   if(full.style.display === 'flex'){
     full.style.display = 'none';
-    mini.style.display = 'block';
+    mini.style.display = 'flex';
   } else {
     full.style.display = 'flex';
     mini.style.display = 'none';
