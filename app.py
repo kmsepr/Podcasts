@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string
-import sqlite3, os, requests, feedparser
+import sqlite3, os, requests, feedparser, time
 
 app = Flask(__name__)
 
@@ -105,6 +105,7 @@ h2 { font-size:18px; margin-top:12px; }
 
 <script>
 let current = null;
+let keyDownTime = {};
 
 function searchPodcast(){
   let q=document.getElementById('query').value;
@@ -159,12 +160,10 @@ function startEpisode(){
   player.src=ep.audio;
   player.play();
 
-  // Mini player (episode title only)
   document.getElementById('miniPlayer').style.display='flex';
   document.getElementById('miniTitle').innerText=ep.title || "";
   document.getElementById('miniCover').src = ep.cover || current.cover;
 
-  // Full player (full description)
   document.getElementById('fullCover').src = ep.cover || current.cover;
   document.getElementById('fullTitle').innerText=current.title;
   document.getElementById('fullDesc').innerText=ep.desc || "";
@@ -203,19 +202,34 @@ function seek(seconds){
   p.currentTime += seconds;
 }
 
-// keypad controls
+// keypad controls (active only in full player)
 document.addEventListener('keydown',function(e){
-  switch(e.key){
-    case "5": togglePlay(); break;
-    case "2": prevEpisode(); break;
-    case "8": nextEpisode(); break;
-    case "4": seek(-20); break;
-    case "6": seek(20); break;
-    case "1": toggleFullPlayer(); break;
-    case "0": closeMini(); break;
-  }
+  let full = document.getElementById('fullPlayer');
+  if(full.style.display !== 'flex') return;
+
+  keyDownTime[e.key] = Date.now();
 });
 
+document.addEventListener('keyup',function(e){
+  let full = document.getElementById('fullPlayer');
+  if(full.style.display !== 'flex') return;
+
+  let duration = Date.now() - (keyDownTime[e.key] || 0);
+
+  switch(e.key){
+    case "5":
+      togglePlay(); break;
+    case "4":
+      if(duration > 500){ seek(-30); } else { prevEpisode(); }
+      break;
+    case "6":
+      if(duration > 500){ seek(30); } else { nextEpisode(); }
+      break;
+    case "0":
+      toggleFullPlayer(); break;
+  }
+  delete keyDownTime[e.key];
+});
 loadFavorites();
 </script>
 </body>
