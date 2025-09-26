@@ -31,24 +31,26 @@ HTML = """
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 body { font-family: sans-serif; background:#111; color:#eee; margin:0; text-align:center; }
-h1 { font-size:22px; margin:10px 0; }
-input[type=text] { width:70%; padding:8px; font-size:16px; }
-button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6px; background:#28a; color:#fff; }
-.podcast-card { background:#222; margin:8px; padding:10px; border-radius:8px; display:flex; align-items:center; }
-.podcast-card img { width:80px; height:80px; border-radius:10px; margin-right:10px; }
-.podcast-title { font-size:18px; margin:6px 0; flex:1; text-align:left; }
-.mini-player { position:fixed; bottom:0; left:0; right:0; background:#333; padding:10px; display:none; }
-.mini-player img { width:50px; height:50px; border-radius:8px; vertical-align:middle; margin-right:10px; }
+h1 { font-size:20px; margin:5px 0; }
+input[type=text] { width:90%; padding:6px; font-size:14px; margin-bottom:5px; }
+button { padding:8px; margin:3px; font-size:14px; border:none; border-radius:6px; background:#28a; color:#fff; }
+.podcast-card { background:#222; margin:4px; padding:6px; border-radius:6px; display:flex; align-items:center; flex-wrap:wrap; }
+.podcast-card img { width:60px; height:60px; border-radius:8px; margin-right:6px; }
+.podcast-title { font-size:16px; margin:4px 0; flex:1; text-align:left; word-break:break-word; }
+.mini-player { position:fixed; bottom:0; left:0; right:0; background:#333; padding:6px; display:none; display:flex; align-items:center; height:50px; box-sizing:border-box; }
+.mini-player img { width:40px; height:40px; border-radius:6px; margin-right:6px; }
 .scroll-desc { white-space:nowrap; overflow:hidden; box-sizing:border-box; display:inline-block; vertical-align:middle; width:70%; }
 .scroll-desc span { display:inline-block; padding-left:100%; animation: scroll 15s linear infinite; }
 @keyframes scroll { 0%{transform:translateX(0);} 100%{transform:translateX(-100%);} }
 .full-player { position:fixed; top:0; left:0; right:0; bottom:0; background:#000; color:#fff;
-               display:none; flex-direction:column; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
-.full-player img { width:220px; height:220px; border-radius:12px; }
-.controls { margin-top:15px; display:flex; flex-wrap:wrap; justify-content:center; }
-.controls button { font-size:20px; padding:12px; margin:6px; }
-.big-text { font-size:20px; margin-top:10px; text-align:center; }
-.desc-text { margin-top:15px; font-size:16px; text-align:left; max-width:90%; }
+               display:none; flex-direction:column; align-items:center; justify-content:flex-start; overflow:hidden; padding:10px; box-sizing:border-box; }
+.full-player img { width:40vw; height:40vw; max-width:220px; max-height:220px; border-radius:10px; margin-top:5px; }
+.controls { margin-top:8px; display:flex; flex-wrap:wrap; justify-content:center; }
+.controls button { font-size:16px; padding:8px; margin:4px; }
+.big-text { font-size:18px; margin-top:8px; text-align:center; word-break:break-word; }
+.desc-text { margin-top:6px; font-size:14px; text-align:left; max-width:95%; overflow-y:auto; flex:1; word-break:break-word; }
+#player { display:none; }
+.results-container, .favorites-container { width:95%; margin:0 auto; }
 </style>
 </head>
 <body>
@@ -61,16 +63,14 @@ button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6p
 </form>
 
 <h2>⭐ Favorites</h2>
-<div id="favorites"></div>
+<div id="favorites" class="favorites-container"></div>
 
 <h2>🔎 Results</h2>
-<div id="results"></div>
+<div id="results" class="results-container"></div>
 
 <div class="mini-player" id="miniPlayer">
   <img id="miniCover" src="">
   <div class="scroll-desc"><span id="miniTitle"></span></div>
-  <button onclick="toggleFullPlayer()">Open</button>
-  <button onclick="closeMini()">Close</button>
 </div>
 
 <div class="full-player" id="fullPlayer">
@@ -86,7 +86,7 @@ button { padding:10px; margin:5px; font-size:16px; border:none; border-radius:6p
   </div>
 </div>
 
-<audio id="player" controls style="display:none"></audio>
+<audio id="player" controls></audio>
 
 <script>
 let current = null;
@@ -145,12 +145,10 @@ function startEpisode(){
   player.src=ep.audio;
   player.play();
 
-  // Mini player (episode title only)
-  document.getElementById('miniPlayer').style.display='block';
+  document.getElementById('miniPlayer').style.display='flex';
   document.getElementById('miniTitle').innerText=ep.title || "";
   document.getElementById('miniCover').src = ep.cover || current.cover;
 
-  // Full player (full description)
   document.getElementById('fullCover').src = ep.cover || current.cover;
   document.getElementById('fullTitle').innerText=current.title;
   document.getElementById('fullDesc').innerText=ep.desc || "";
@@ -161,33 +159,20 @@ function toggleFullPlayer(){
   let mini = document.getElementById('miniPlayer');
   if(full.style.display === 'flex'){
     full.style.display = 'none';
-    mini.style.display = 'block';
+    mini.style.display = 'flex';
   } else {
     full.style.display = 'flex';
     mini.style.display = 'none';
   }
 }
 
-function closeMini(){
-  document.getElementById('miniPlayer').style.display='none';
-  document.getElementById('fullPlayer').style.display='none';
-  document.getElementById('player').pause();
-}
-
 function togglePlay(){
   let p=document.getElementById('player');
   if(p.paused) p.play(); else p.pause();
 }
-function nextEpisode(){
-  if(current && current.idx<current.list.length-1){current.idx++; startEpisode();}
-}
-function prevEpisode(){
-  if(current && current.idx>0){current.idx--; startEpisode();}
-}
-function seek(seconds){
-  let p=document.getElementById('player');
-  p.currentTime += seconds;
-}
+function nextEpisode(){ if(current && current.idx<current.list.length-1){current.idx++; startEpisode();} }
+function prevEpisode(){ if(current && current.idx>0){current.idx--; startEpisode();} }
+function seek(seconds){ let p=document.getElementById('player'); p.currentTime += seconds; }
 
 // keypad controls with long press
 document.addEventListener('keydown',function(e){
@@ -198,12 +183,8 @@ document.addEventListener('keyup',function(e){
   delete keyDownTime[e.key];
   switch(e.key){
     case "5": togglePlay(); break;
-    case "4":
-      if(duration>500){ seek(-30); } else { prevEpisode(); }
-      break;
-    case "6":
-      if(duration>500){ seek(30); } else { nextEpisode(); }
-      break;
+    case "4": duration>500 ? seek(-30) : prevEpisode(); break;
+    case "6": duration>500 ? seek(30) : nextEpisode(); break;
     case "0": toggleFullPlayer(); break;
   }
 });
@@ -216,8 +197,7 @@ loadFavorites();
 
 # ---------------- Flask Routes ----------------
 @app.route("/")
-def index():
-    return render_template_string(HTML)
+def index(): return render_template_string(HTML)
 
 @app.route("/api/search")
 def search():
@@ -266,15 +246,11 @@ def episodes():
     for e in feed.entries[:10]:
         audio=None
         for link in e.get("links",[]):
-            if link.get("type","").startswith("audio"):
-                audio=link["href"]
+            if link.get("type","").startswith("audio"): audio=link["href"]
         cover=None
-        if "image" in e:
-            cover=e.image.get("href")
-        elif "itunes_image" in e:
-            cover=e.itunes_image
-        elif "media_thumbnail" in e:
-            cover=e.media_thumbnail[0]['url']
+        if "image" in e: cover=e.image.get("href")
+        elif "itunes_image" in e: cover=e.itunes_image
+        elif "media_thumbnail" in e: cover=e.media_thumbnail[0]['url']
         if audio:
             eps.append({
                 "title": e.get("title"),
@@ -285,4 +261,4 @@ def episodes():
     return jsonify(eps)
 
 if __name__=="__main__":
-    app.run(host="0.0.0.0",port=5000,debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
