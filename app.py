@@ -1,5 +1,5 @@
-from flask import Flask, request, jsonify, render_template_string
-import sqlite3, os, requests, feedparser, time
+from flask import Flask, request, jsonify, render_template_string, send_file
+import sqlite3, os, requests, feedparser, time, subprocess, uuid, hashlib
 
 app = Flask(__name__)
 
@@ -21,6 +21,13 @@ def init_db():
 
 init_db()
 
+# ---------------- CACHE FOLDER ----------------
+CACHE_DIR = "cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def hash_url(url):
+    return hashlib.md5(url.encode()).hexdigest()
+
 # ---------------- HTML Template ----------------
 HTML = """
 <!DOCTYPE html>
@@ -39,18 +46,17 @@ button { padding:8px; margin:3px; font-size:14px; border:none; border-radius:6px
 .podcast-title { font-size:16px; margin:4px 0; flex:1; text-align:left; word-break:break-word; }
 .mini-player { position:fixed; bottom:0; left:0; right:0; background:#333; padding:6px; display:none; display:flex; align-items:center; height:50px; box-sizing:border-box; }
 .mini-player img { width:40px; height:40px; border-radius:6px; margin-right:6px; }
-.scroll-desc { white-space:nowrap; overflow:hidden; box-sizing:border-box; display:inline-block; vertical-align:middle; width:70%; }
+.scroll-desc { white-space:nowrap; overflow:hidden; width:70%; }
 .scroll-desc span { display:inline-block; padding-left:100%; animation: scroll 15s linear infinite; }
 @keyframes scroll { 0%{transform:translateX(0);} 100%{transform:translateX(-100%);} }
 .full-player { position:fixed; top:0; left:0; right:0; bottom:0; background:#000; color:#fff;
-               display:none; flex-direction:column; align-items:center; justify-content:flex-start; overflow:hidden; padding:10px; box-sizing:border-box; }
-.full-player img { width:40vw; height:40vw; max-width:220px; max-height:220px; border-radius:10px; margin-top:5px; }
+               display:none; flex-direction:column; align-items:center; padding:10px; }
+.full-player img { width:40vw; max-width:220px; border-radius:10px; margin-top:5px; }
 .controls { margin-top:8px; display:flex; flex-wrap:wrap; justify-content:center; }
 .controls button { font-size:16px; padding:8px; margin:4px; }
-.big-text { font-size:18px; margin-top:8px; text-align:center; word-break:break-word; }
-.desc-text { margin-top:6px; font-size:14px; text-align:left; max-width:95%; overflow-y:auto; flex:1; word-break:break-word; }
+.big-text { font-size:18px; margin-top:8px; text-align:center; }
+.desc-text { margin-top:6px; font-size:14px; max-width:95%; overflow-y:auto; flex:1; }
 #player { display:none; }
-.results-container, .favorites-container { width:95%; margin:0 auto; }
 </style>
 </head>
 <body>
@@ -63,10 +69,10 @@ button { padding:8px; margin:3px; font-size:14px; border:none; border-radius:6px
 </form>
 
 <h2>⭐ Favorites</h2>
-<div id="favorites" class="favorites-container"></div>
+<div id="favorites"></div>
 
 <h2>🔎 Results</h2>
-<div id="results" class="results-container"></div>
+<div id="results"></div>
 
 <div class="mini-player" id="miniPlayer">
   <img id="miniCover" src="">
@@ -97,7 +103,7 @@ function searchPodcast(){
   fetch('/api/search?q='+encodeURIComponent(q))
    .then(r=>r.json()).then(data=>{
      let out="";
-     if(data.length===0){ out="<p>No results or API quota reached</p>"; }
+     if(data.length===0){ out="<p>No results or API limit reached</p>"; }
      data.forEach(p=>{
        out+=`<div class="podcast-card">
          <img src="${p.cover}">
@@ -106,8 +112,6 @@ function searchPodcast(){
        </div>`;
      });
      document.getElementById('results').innerHTML=out;
-   }).catch(err=>{
-     document.getElementById('results').innerHTML="<p>Search failed, try later</p>";
    });
 }
 
@@ -142,16 +146,17 @@ function playPodcast(rss,title,cover){
 function startEpisode(){
   let ep=current.list[current.idx];
   let player=document.getElementById('player');
-  player.src=ep.audio;
+
+  player.src="/api/transcoded?url=" + encodeURIComponent(ep.audio);
   player.play();
 
   document.getElementById('miniPlayer').style.display='flex';
-  document.getElementById('miniTitle').innerText=ep.title || "";
+  document.getElementById('miniTitle').innerText=ep.title;
   document.getElementById('miniCover').src = ep.cover || current.cover;
 
   document.getElementById('fullCover').src = ep.cover || current.cover;
   document.getElementById('fullTitle').innerText=current.title;
-  document.getElementById('fullDesc').innerText=ep.desc || "";
+  document.getElementById('fullDesc').innerHTML=ep.desc;
 }
 
 function toggleFullPlayer(){
@@ -174,7 +179,6 @@ function nextEpisode(){ if(current && current.idx<current.list.length-1){current
 function prevEpisode(){ if(current && current.idx>0){current.idx--; startEpisode();} }
 function seek(seconds){ let p=document.getElementById('player'); p.currentTime += seconds; }
 
-// keypad controls with long press
 document.addEventListener('keydown',function(e){
   if(!keyDownTime[e.key]) keyDownTime[e.key]=Date.now();
 });
@@ -197,7 +201,8 @@ loadFavorites();
 
 # ---------------- Flask Routes ----------------
 @app.route("/")
-def index(): return render_template_string(HTML)
+def index():
+    return render_template_string(HTML)
 
 @app.route("/api/search")
 def search():
@@ -243,14 +248,20 @@ def episodes():
     rss=request.args.get("rss")
     feed=feedparser.parse(rss)
     eps=[]
-    for e in feed.entries[:10]:
+    for e in feed.entries[:20]:
         audio=None
         for link in e.get("links",[]):
-            if link.get("type","").startswith("audio"): audio=link["href"]
+            if link.get("type","").startswith("audio"):
+                audio=link["href"]
+
         cover=None
-        if "image" in e: cover=e.image.get("href")
-        elif "itunes_image" in e: cover=e.itunes_image
-        elif "media_thumbnail" in e: cover=e.media_thumbnail[0]['url']
+        if "image" in e: 
+            cover=e.image.get("href")
+        elif "itunes_image" in e:
+            cover=e.itunes_image
+        elif "media_thumbnail" in e:
+            cover=e.media_thumbnail[0]['url']
+
         if audio:
             eps.append({
                 "title": e.get("title"),
@@ -260,5 +271,48 @@ def episodes():
             })
     return jsonify(eps)
 
+# -------------- 24 Kbps Ultra Low-Bandwidth Transcoding --------------
+@app.route("/api/transcoded")
+def transcoded():
+    url = request.args.get("url")
+    if not url:
+        return "missing url", 400
+
+    key = hash_url(url)
+    cached_file = os.path.join(CACHE_DIR, key + ".mp3")
+
+    # return cached if exists
+    if os.path.exists(cached_file):
+        return send_file(cached_file, mimetype="audio/mpeg")
+
+    temp_original = os.path.join(CACHE_DIR, key + ".orig")
+
+    # ---- Download original audio ----
+    try:
+        with requests.get(url, stream=True, timeout=20) as r:
+            r.raise_for_status()
+            with open(temp_original, "wb") as f:
+                for chunk in r.iter_content(1024 * 64):
+                    f.write(chunk)
+    except:
+        return "download error", 500
+
+    # ---- Transcode to 24kbps mono ----
+    try:
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", temp_original,
+            "-ac", "1",
+            "-b:a", "24k",
+            "-map", "a",
+            cached_file
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        return "ffmpeg error", 500
+
+    return send_file(cached_file, mimetype="audio/mpeg")
+
+
+# ---------------- Run ----------------
 if __name__=="__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
