@@ -17,7 +17,7 @@ VOLUME ["/mnt/data"]
 ENV PYTHONUNBUFFERED=1
 
 # Expose port (Koyeb/Heroku will map $PORT to this)
-EXPOSE 3000
+EXPOSE 8000
 
 # Default command (Flask must listen on 0.0.0.0 and $PORT)
 CMD ["python", "app.py"]
