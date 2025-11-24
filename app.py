@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string, send_file
-import sqlite3, os, requests, feedparser, time, subprocess, uuid
+import sqlite3, os, requests, feedparser, subprocess, uuid
 
 app = Flask(__name__)
 
@@ -241,3 +241,7 @@ def transcoded():
         return send_file(tmp, mimetype="audio/mpeg")
     except:
         return jsonify({"error":"ffmpeg failed"})
+
+# ---------------- Run on port 3000 ----------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000)
