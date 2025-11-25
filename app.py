@@ -1,153 +1,166 @@
 import os
+import datetime
 import requests
 import feedparser
+from flask import Flask, send_file, render_template_string
+from apscheduler.schedulers.background import BackgroundScheduler
 import subprocess
-from flask import Flask, render_template_string, send_file, abort
 
 app = Flask(__name__)
 
-PODCAST_NAME = "outoffocus"
-FEED_URL = "https://feeds.buzzsprout.com/2050847.rss"
-MEDIA_ROOT = "/mnt/data/media/outoffocus"
+# ----------------------------------------------------------
+# CONFIG
+# ----------------------------------------------------------
 
-os.makedirs(MEDIA_ROOT, exist_ok=True)
+RSS_URL = "https://anchor.fm/s/8fd39f70/podcast/rss"
+CACHE_DIR = "/mnt/data/podcache"
+CACHED_MP3 = os.path.join(CACHE_DIR, "latest.mp3")
+LAST_REFRESH_FILE = os.path.join(CACHE_DIR, "last_refresh.txt")
 
-# -----------------------------
-#  HTML TEMPLATE (INLINE)
-# -----------------------------
+# Create directories
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+# ----------------------------------------------------------
+# UTILITIES
+# ----------------------------------------------------------
+
+def write_last_refresh():
+    with open(LAST_REFRESH_FILE, "w") as f:
+        f.write(datetime.datetime.utcnow().isoformat())
+
+def read_last_refresh():
+    if not os.path.exists(LAST_REFRESH_FILE):
+        return None
+    with open(LAST_REFRESH_FILE, "r") as f:
+        return datetime.datetime.fromisoformat(f.read().strip())
+
+
+def ffmpeg_available():
+    """Check if ffmpeg exists in container."""
+    return subprocess.call(["which", "ffmpeg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) == 0
+
+
+# ----------------------------------------------------------
+# FETCH + TRANSCODE LOGIC
+# ----------------------------------------------------------
+
+def refresh_latest_episode():
+    """Fetch RSS → download audio → transcode → cache."""
+    try:
+        print("Refreshing latest episode...")
+
+        feed = feedparser.parse(RSS_URL)
+        if not feed.entries:
+            print("RSS empty")
+            return
+
+        # Get Top 3 Episodes Only
+        latest_entries = feed.entries[:3]
+
+        # Use episode #1 (most recent)
+        episode = latest_entries[0]
+        audio_url = episode.enclosures[0]["href"]
+
+        print("Downloading:", audio_url)
+        audio_data = requests.get(audio_url, timeout=20).content
+
+        temp_in = os.path.join(CACHE_DIR, "temp_in.mp3")
+        temp_out = os.path.join(CACHE_DIR, "temp_out.mp3")
+
+        with open(temp_in, "wb") as f:
+            f.write(audio_data)
+
+        # Transcoding — only if ffmpeg exists
+        if ffmpeg_available():
+            subprocess.call([
+                "ffmpeg", "-y",
+                "-i", temp_in,
+                "-codec:a", "libmp3lame",
+                "-b:a", "128k",
+                temp_out
+            ])
+            os.replace(temp_out, CACHED_MP3)
+        else:
+            # No ffmpeg — save original
+            os.replace(temp_in, CACHED_MP3)
+
+        write_last_refresh()
+        print("Refresh complete.")
+
+    except Exception as e:
+        print("Refresh error:", e)
+
+
+# ----------------------------------------------------------
+# APSCHEDULER – refresh every 12 hours
+# ----------------------------------------------------------
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(refresh_latest_episode, "interval", hours=12)
+scheduler.start()
+
+# First run: if cache missing → force refresh
+if not os.path.exists(CACHED_MP3):
+    refresh_latest_episode()
+
+
+# ----------------------------------------------------------
+# FLASK ROUTES
+# ----------------------------------------------------------
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Out Of Focus Podcast</title>
-    <style>
-        body { font-family: Arial; background:#f2f2f2; padding:20px; }
-        .card {
-            background:white; padding:20px; margin-bottom:20px;
-            border-radius:10px; box-shadow:0 3px 8px rgba(0,0,0,0.15);
-        }
-        h2 { margin:0; }
-        .btn {
-            display:inline-block; padding:10px 15px;
-            background:#007bff; color:white; text-decoration:none;
-            border-radius:6px;
-        }
-    </style>
+<title>Podcast Cache</title>
+<style>
+body { font-family: Arial; padding: 20px; }
+.btn {
+  padding: 14px 20px;
+  background: #007bff; color: white;
+  border-radius: 6px; text-decoration: none;
+}
+</style>
 </head>
 <body>
-    <h1>Out Of Focus - All Episodes</h1>
+<h2>Latest 3 Episodes</h2>
+<ul>
+{% for ep in episodes %}
+  <li><b>{{ep.title}}</b> — {{ep.published}}</li>
+{% endfor %}
+</ul>
 
-    {% for ep in episodes %}
-    <div class="card">
-        <h2>{{ ep.title }}</h2>
-        <small>{{ ep.published }}</small>
-        <p>{{ ep.description }}</p>
+<h3>Download Cached Latest Episode</h3>
+<a href="/download" class="btn">Download MP3</a>
 
-        <a class="btn" href="/download/outoffocus/{{ ep.id }}">Download (40 kbps mono)</a>
-    </div>
-    {% endfor %}
+<p>Last refresh: <b>{{last_refresh}}</b></p>
 </body>
 </html>
 """
 
-
-# -----------------------------------------------------
-#  HOME PAGE -> LIST EPISODES WITH FULL DESCRIPTION
-# -----------------------------------------------------
 @app.route("/")
-def home():
-    feed = feedparser.parse(FEED_URL)
-    episodes = []
+def index():
+    feed = feedparser.parse(RSS_URL)
+    episodes = feed.entries[:3]
 
-    # Limit to latest 3
-    latest = feed.entries[:3]
+    last_refresh = read_last_refresh()
 
-    for i, item in enumerate(latest):
-        if not item.enclosures:
-            continue
-
-        episodes.append({
-            "id": i,
-            "title": item.title,
-            "published": item.published,
-            "description": item.summary,
-        })
-
-    return render_template_string(HTML_TEMPLATE, episodes=episodes)
-
-# -----------------------------------------------------
-#  DOWNLOAD + TRANSCODE ENDPOINT
-# -----------------------------------------------------
-@app.route("/download/outoffocus/<int:ep_id>")
-def download_episode(ep_id):
-    feed = feedparser.parse(FEED_URL)
-
-    if ep_id >= len(feed.entries):
-        abort(404)
-
-    entry = feed.entries[ep_id]
-
-    if not entry.enclosures:
-        abort(404)
-
-    audio_url = entry.enclosures[0].href
-
-    # unique file name per-episode
-    safe_title = entry.title.replace(" ", "_").replace("|", "").replace("/", "_")
-    output_mp3 = os.path.join(MEDIA_ROOT, f"{safe_title}.mp3")
-
-    if os.path.exists(output_mp3):
-        return send_file(output_mp3, as_attachment=True)
-
-    # -------------------------
-    # DOWNLOAD ORIGINAL FILE
-    # -------------------------
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0 Safari/537.36"
-        )
-    }
-
-    tmp_file = "/tmp/original_download"
-
-    try:
-        r = requests.get(audio_url, headers=headers, stream=True, timeout=60)
-        r.raise_for_status()
-
-        with open(tmp_file, "wb") as f:
-            for chunk in r.iter_content(1024 * 32):
-                f.write(chunk)
-
-        if os.path.getsize(tmp_file) < 5000:
-            return "Source audio too small / invalid.", 500
-
-    except Exception as e:
-        return f"Download failed: {e}", 500
-
-    # -------------------------
-    # FFMPEG TRANSCODE → 40 kbps mono mp3
-    # -------------------------
-    try:
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", tmp_file,
-            "-ar", "44100",
-            "-ac", "1",
-            "-b:a", "40k",
-            output_mp3
-        ]
-        subprocess.run(cmd, check=True)
-    except Exception as e:
-        return f"FFmpeg error: {e}", 500
-
-    return send_file(output_mp3, as_attachment=True)
+    return render_template_string(
+        HTML_TEMPLATE,
+        episodes=episodes,
+        last_refresh=last_refresh if last_refresh else "Never"
+    )
 
 
-# -----------------------------------------------------
-#  START SERVER
-# -----------------------------------------------------
+@app.route("/download")
+def download():
+    if not os.path.exists(CACHED_MP3):
+        return "File not cached yet. Try again later.", 404
+
+    return send_file(CACHED_MP3, as_attachment=True)
+
+
+# ----------------------------------------------------------
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=8000)
