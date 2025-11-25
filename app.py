@@ -5,137 +5,132 @@ import os
 
 app = Flask(__name__)
 
-# -------------------------------------------------
-# 1. PODCAST LIST (ADD AS MANY AS YOU WANT)
-# -------------------------------------------------
+# ------------------------------------------
+# 1. Podcast list with friendly names
+# ------------------------------------------
 PODCASTS = {
-    "outoffocus": "https://feeds.buzzsprout.com/2050847.rss",
-    "newsminute": "https://rss.art19.com/the-news-minute",
-    "tech": "https://feeds.megaphone.fm/vergecast"
+    "outoffocus": {
+        "name": "Out Of Focus",
+        "rss": "https://feeds.buzzsprout.com/2050847.rss"
+    },
+    "show2": {
+        "name": "My Second Show",
+        "rss": "https://example.com/feed.xml"
+    },
+    "show3": {
+        "name": "Third Podcast",
+        "rss": "https://example.com/feed2.xml"
+    }
 }
 
-# Store latest episode cache
-CACHE = {}
-
-# -------------------------------------------------
-# 2. Helper – Fetch latest episode
-# -------------------------------------------------
-def fetch_latest(podcast_id):
-    url = PODCASTS[podcast_id]
-    feed = feedparser.parse(url)
+# ------------------------------------------
+# 2. Fetch latest episode from RSS
+# ------------------------------------------
+def fetch_latest(pid):
+    feed = feedparser.parse(PODCASTS[pid]["rss"])
 
     if not feed.entries:
         return None
 
-    entry = feed.entries[0]
+    e = feed.entries[0]
 
-    enclosure_url = None
-    if "enclosures" in entry and len(entry.enclosures) > 0:
-        enclosure_url = entry.enclosures[0].href
+    # locate audio URL
+    audio_url = None
+    for link in e.get("links", []):
+        if "audio" in link.get("type", ""):
+            audio_url = link.get("href")
+            break
 
     return {
-        "podcast": podcast_id,
-        "title": entry.title,
-        "published": entry.get("published", "Unknown"),
-        "audio_url": enclosure_url,
+        "podcast": pid,
+        "title": e.get("title", ""),
+        "published": e.get("published", ""),
+        "audio_url": audio_url
     }
 
 
-# -------------------------------------------------
-# 3. Home page HTML (with buttons)
-# -------------------------------------------------
-HOME_PAGE = """
-<!DOCTYPE html>
+# ------------------------------------------
+# 3. Homepage HTML listing all podcasts
+# ------------------------------------------
+HOME = """
 <html>
 <head>
-    <title>Podcast Downloader</title>
-    <style>
-        body { font-family: Arial; background: #f2f2f2; padding: 20px; }
-        .card {
-            background: white; padding: 20px; margin-bottom: 15px;
-            border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-        .btn {
-            background: #007bff; color: white; padding: 10px 15px;
-            border-radius: 6px; text-decoration: none;
-        }
-        .btn:hover { background: #0056b3; }
-    </style>
+<title>Podcast Downloads</title>
+<style>
+body { font-family: Arial; background:#f3f3f3; padding:20px; }
+.card { background:white; padding:15px; margin-bottom:15px; border-radius:10px; }
+.btn { padding:10px 14px; background:#0067ff; color:white; border-radius:8px; text-decoration:none; }
+</style>
 </head>
 <body>
-    <h2>Available Podcasts</h2>
 
-    {% for pid, item in podcasts.items() %}
-    <div class="card">
-        <h3>{{ item.title }}</h3>
-        <p><b>ID:</b> {{ pid }}</p>
-        <p><b>Published:</b> {{ item.published }}</p>
+<h2>Podcast List</h2>
 
-        {% if item.audio_url %}
-        <a class="btn"
-           href="/download/{{ pid }}">
-           Download Latest Episode
-        </a>
-        {% else %}
-        <p>No audio file found.</p>
-        {% endif %}
-    </div>
-    {% endfor %}
+{% for pid, p in items.items() %}
+<div class="card">
+    <h3>{{ p.friendly }}</h3>
+    <p><b>Latest:</b> {{ p.info.title }}</p>
+    <p><b>Published:</b> {{ p.info.published }}</p>
+    <a class="btn" href="/download/{{ pid }}">Download 40 kbps MP3</a>
+</div>
+{% endfor %}
+
 </body>
 </html>
 """
 
-# -------------------------------------------------
-# 4. Home page route
-# -------------------------------------------------
 @app.route("/")
 def home():
     data = {}
-    for pid in PODCASTS:
-        data[pid] = fetch_latest(pid)
+    for pid, obj in PODCASTS.items():
+        info = fetch_latest(pid)
+        data[pid] = {
+            "friendly": obj["name"],
+            "info": info or {"title": "No episodes", "published": "", "audio_url": None}
+        }
 
-    return render_template_string(HOME_PAGE, podcasts=data)
+    return render_template_string(HOME, items=data)
 
-# -------------------------------------------------
-# 5. API endpoint – Latest JSON
-# -------------------------------------------------
-@app.route("/api/latest/<podcast_id>")
-def api_latest(podcast_id):
-    if podcast_id not in PODCASTS:
-        return jsonify({"error": "Invalid podcast ID"}), 404
 
-    latest = fetch_latest(podcast_id)
-    return jsonify(latest)
+# ------------------------------------------
+# 4. JSON route for API use
+# ------------------------------------------
+@app.route("/api/latest/<pid>")
+def latest_api(pid):
+    if pid not in PODCASTS:
+        return {"error": "Invalid ID"}, 404
+    return jsonify(fetch_latest(pid))
 
-# -------------------------------------------------
-# 6. Download handler
-# -------------------------------------------------
-@app.route("/download/<podcast_id>")
-def download_latest(podcast_id):
 
-    if podcast_id not in PODCASTS:
-        return "Invalid podcast ID", 404
+# ------------------------------------------
+# 5. Download + Transcode (40 kbps mono)
+# ------------------------------------------
+@app.route("/download/<pid>")
+def download(pid):
+    if pid not in PODCASTS:
+        return "Invalid podcast", 404
 
-    latest = fetch_latest(podcast_id)
-    if not latest or not latest["audio_url"]:
-        return "No audio file available", 400
+    info = fetch_latest(pid)
+    if not info or not info["audio_url"]:
+        return "No audio", 400
 
-    audio_url = latest["audio_url"]
+    src = info["audio_url"]
+    src_file = f"/tmp/{pid}_src"
+    out_file = f"/tmp/{pid}_40kbps.mp3"
 
-    # Download audio into temp file
-    filename = f"{podcast_id}.mp3"
-    filepath = f"/tmp/{filename}"
-
-    r = requests.get(audio_url, stream=True)
-    with open(filepath, "wb") as f:
+    # Download original audio
+    r = requests.get(src, stream=True)
+    with open(src_file, "wb") as f:
         for chunk in r.iter_content(1024):
             f.write(chunk)
 
-    return send_file(filepath, as_attachment=True)
+    # Convert to 40 kbps mono MP3
+    os.system(
+        f"ffmpeg -y -i {src_file} -vn -ac 1 -ar 44100 -b:a 40k {out_file}"
+    )
 
-# -------------------------------------------------
-# 7. Start app
-# -------------------------------------------------
+    return send_file(out_file, as_attachment=True, download_name=f"{pid}.mp3")
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=8000)
