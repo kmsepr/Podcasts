@@ -1,138 +1,153 @@
 import os
 import requests
 import feedparser
-from flask import Flask, send_file, render_template_string, abort
+import subprocess
+from flask import Flask, render_template_string, send_file, abort
 
 app = Flask(__name__)
 
-# -----------------------------
-# CONFIG: Add podcasts here
-# -----------------------------
-PODCASTS = {
-    "outoffocus": "https://feeds.buzzsprout.com/2050847.rss",
-    # add more:
-    # "show2": "https://example.com/feed.xml",
-    # "show3": "https://example.com/feed.xml"
-}
+PODCAST_NAME = "outoffocus"
+FEED_URL = "https://feeds.buzzsprout.com/2050847.rss"
+MEDIA_ROOT = "/mnt/data/media/outoffocus"
 
-# Storage folder
-MEDIA = "media"
-os.makedirs(MEDIA, exist_ok=True)
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 # -----------------------------
-# Fetch latest episode
+#  HTML TEMPLATE (INLINE)
 # -----------------------------
-def fetch_latest(podcast_name):
-    if podcast_name not in PODCASTS:
-        return None
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Out Of Focus Podcast</title>
+    <style>
+        body { font-family: Arial; background:#f2f2f2; padding:20px; }
+        .card {
+            background:white; padding:20px; margin-bottom:20px;
+            border-radius:10px; box-shadow:0 3px 8px rgba(0,0,0,0.15);
+        }
+        h2 { margin:0; }
+        .btn {
+            display:inline-block; padding:10px 15px;
+            background:#007bff; color:white; text-decoration:none;
+            border-radius:6px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Out Of Focus - All Episodes</h1>
 
-    rss_url = PODCASTS[podcast_name]
-    feed = feedparser.parse(rss_url)
+    {% for ep in episodes %}
+    <div class="card">
+        <h2>{{ ep.title }}</h2>
+        <small>{{ ep.published }}</small>
+        <p>{{ ep.description }}</p>
 
-    if not feed.entries:
-        return None
+        <a class="btn" href="/download/outoffocus/{{ ep.id }}">Download (40 kbps mono)</a>
+    </div>
+    {% endfor %}
+</body>
+</html>
+"""
 
-    e = feed.entries[0]
 
-    # audio URL
-    audio = None
-    for link in e.links:
-        if "audio" in link.type:
-            audio = link.href
-            break
-
-    if not audio:
-        return None
-
-    # Create date stamp (YYYYMMDD)
-    if "published_parsed" in e:
-        date = e.published_parsed
-        date_tag = f"{date.tm_year}{date.tm_mon:02d}{date.tm_mday:02d}"
-    else:
-        date_tag = "latest"
-
-    # File path
-    folder = os.path.join(MEDIA, podcast_name)
-    os.makedirs(folder, exist_ok=True)
-
-    file_path = os.path.join(folder, f"{date_tag}.mp3")
-
-    return {
-        "title": e.title,
-        "published": e.get("published", ""),
-        "audio_url": audio,
-        "file_path": file_path,
-        "file_name": f"{date_tag}.mp3",
-        "folder": folder
-    }
-
-# -----------------------------
-# HOME PAGE: List all podcasts
-# -----------------------------
+# -----------------------------------------------------
+#  HOME PAGE -> LIST EPISODES WITH FULL DESCRIPTION
+# -----------------------------------------------------
 @app.route("/")
 def home():
-    HTML = """
-    <html><body>
-    <h2>Podcast List</h2>
-    {% for name in podcasts %}
-        <p><a href="/podcast/{{name}}">{{name}}</a></p>
-    {% endfor %}
-    </body></html>
-    """
-    return render_template_string(HTML, podcasts=PODCASTS.keys())
+    feed = feedparser.parse(FEED_URL)
+    episodes = []
 
-# -----------------------------
-# PODCAST PAGE
-# -----------------------------
-@app.route("/podcast/<podcast_name>")
-def podcast_page(podcast_name):
-    info = fetch_latest(podcast_name)
-    if not info:
+    # Limit to latest 3
+    latest = feed.entries[:3]
+
+    for i, item in enumerate(latest):
+        if not item.enclosures:
+            continue
+
+        episodes.append({
+            "id": i,
+            "title": item.title,
+            "published": item.published,
+            "description": item.summary,
+        })
+
+    return render_template_string(HTML_TEMPLATE, episodes=episodes)
+
+# -----------------------------------------------------
+#  DOWNLOAD + TRANSCODE ENDPOINT
+# -----------------------------------------------------
+@app.route("/download/outoffocus/<int:ep_id>")
+def download_episode(ep_id):
+    feed = feedparser.parse(FEED_URL)
+
+    if ep_id >= len(feed.entries):
         abort(404)
 
-    # Simple page with download link
-    HTML = """
-    <html><body>
-    <h2>{{name}}</h2>
-    <p><b>{{info.title}}</b></p>
-    <p>{{info.published}}</p>
+    entry = feed.entries[ep_id]
 
-    <a href="/download/{{name}}">Download 40kbps MP3</a>
-    </body></html>
-    """
-    return render_template_string(HTML, name=podcast_name, info=info)
-
-# -----------------------------
-# DOWNLOAD + TRANSCODE
-# -----------------------------
-@app.route("/download/<podcast_name>")
-def download(podcast_name):
-    info = fetch_latest(podcast_name)
-    if not info:
+    if not entry.enclosures:
         abort(404)
 
-    out_file = info["file_path"]
+    audio_url = entry.enclosures[0].href
 
-    # Already processed? Serve it.
-    if os.path.exists(out_file):
-        return send_file(out_file, as_attachment=True)
+    # unique file name per-episode
+    safe_title = entry.title.replace(" ", "_").replace("|", "").replace("/", "_")
+    output_mp3 = os.path.join(MEDIA_ROOT, f"{safe_title}.mp3")
 
-    # Download source
-    src_tmp = "/tmp/src_audio"
-    r = requests.get(info["audio_url"], stream=True)
-    with open(src_tmp, "wb") as f:
-        for chunk in r.iter_content(1024):
-            f.write(chunk)
+    if os.path.exists(output_mp3):
+        return send_file(output_mp3, as_attachment=True)
 
-    # Convert → 40 kbps mono MP3
-    os.system(
-        f"ffmpeg -y -i {src_tmp} -ac 1 -ar 44100 -b:a 40k {out_file}"
-    )
+    # -------------------------
+    # DOWNLOAD ORIGINAL FILE
+    # -------------------------
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        )
+    }
 
-    return send_file(out_file, as_attachment=True)
+    tmp_file = "/tmp/original_download"
 
-# -----------------------------
-# Run server
-# -----------------------------
+    try:
+        r = requests.get(audio_url, headers=headers, stream=True, timeout=60)
+        r.raise_for_status()
+
+        with open(tmp_file, "wb") as f:
+            for chunk in r.iter_content(1024 * 32):
+                f.write(chunk)
+
+        if os.path.getsize(tmp_file) < 5000:
+            return "Source audio too small / invalid.", 500
+
+    except Exception as e:
+        return f"Download failed: {e}", 500
+
+    # -------------------------
+    # FFMPEG TRANSCODE → 40 kbps mono mp3
+    # -------------------------
+    try:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", tmp_file,
+            "-ar", "44100",
+            "-ac", "1",
+            "-b:a", "40k",
+            output_mp3
+        ]
+        subprocess.run(cmd, check=True)
+    except Exception as e:
+        return f"FFmpeg error: {e}", 500
+
+    return send_file(output_mp3, as_attachment=True)
+
+
+# -----------------------------------------------------
+#  START SERVER
+# -----------------------------------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
