@@ -1,9 +1,10 @@
 import os
 import requests
 import feedparser
-from flask import Flask, jsonify, send_file, render_template_string
+from flask import Flask, jsonify, send_file
 import subprocess
 from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
@@ -16,7 +17,69 @@ PODCAST_FEEDS = {
     "outoffocus": "https://feeds.buzzsprout.com/2050847.rss"
 }
 
-# Simple home page listing all podcasts
+def download_and_convert(name):
+    """Download latest episode and convert to 40kbps mono MP3."""
+    if name not in PODCAST_FEEDS:
+        print(f"{name} not in feeds")
+        return
+
+    feed = feedparser.parse(PODCAST_FEEDS[name])
+    if not feed.entries:
+        print(f"No episodes found for {name}")
+        return
+
+    latest = feed.entries[0]
+    audio_url = latest.enclosures[0].href
+
+    podcast_dir = os.path.join(MEDIA_DIR, name)
+    os.makedirs(podcast_dir, exist_ok=True)
+
+    date_str = datetime.utcnow().strftime("%Y%m%d")
+    out_file = os.path.join(podcast_dir, f"{date_str}.mp3")
+
+    # Skip if file already exists
+    if os.path.exists(out_file):
+        print(f"File already exists for {name}: {out_file}")
+        return
+
+    tmp_file = "/tmp/src_audio"
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(audio_url, headers=headers, stream=True, timeout=60)
+        r.raise_for_status()
+        with open(tmp_file, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        if os.path.getsize(tmp_file) == 0:
+            print(f"Downloaded file empty for {name}")
+            return
+    except Exception as e:
+        print(f"Error downloading audio for {name}: {e}")
+        return
+
+    try:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", tmp_file,
+            "-ar", "44100",
+            "-ac", "1",
+            "-b:a", "40k",
+            out_file
+        ]
+        subprocess.run(cmd, check=True)
+        print(f"Converted and saved {name} -> {out_file}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error converting audio for {name}: {e}")
+
+# Schedule job twice a day (UTC)
+scheduler = BackgroundScheduler()
+for hour in [8, 20]:  # 8 AM and 8 PM UTC
+    scheduler.add_job(
+        lambda: [download_and_convert(name) for name in PODCAST_FEEDS],
+        'cron', hour=hour, minute=0
+    )
+scheduler.start()
+
 @app.route("/")
 def home():
     podcasts = list(PODCAST_FEEDS.keys())
@@ -26,12 +89,11 @@ def home():
     html += "</ul>"
     return html
 
-# Podcast page showing latest episode and download link
 @app.route("/podcast/<name>")
 def podcast_page(name):
     if name not in PODCAST_FEEDS:
         return "Podcast not found", 404
-    
+
     feed = feedparser.parse(PODCAST_FEEDS[name])
     if not feed.entries:
         return "No episodes found", 404
@@ -46,60 +108,23 @@ def podcast_page(name):
     """
     return html
 
-# Download & convert endpoint
 @app.route("/download/<name>")
 def download(name):
     if name not in PODCAST_FEEDS:
         return "Podcast not found", 404
 
-    feed = feedparser.parse(PODCAST_FEEDS[name])
-    if not feed.entries:
-        return "No episodes found", 404
-
-    latest = feed.entries[0]
-    audio_url = latest.enclosures[0].href
-
-    # Destination folder
-    podcast_dir = os.path.join(MEDIA_DIR, name)
-    os.makedirs(podcast_dir, exist_ok=True)
-
-    # Unique filename by date
     date_str = datetime.utcnow().strftime("%Y%m%d")
-    out_file = os.path.join(podcast_dir, f"{date_str}.mp3")
+    out_file = os.path.join(MEDIA_DIR, name, f"{date_str}.mp3")
 
-    # If file already exists, serve it
     if os.path.exists(out_file):
         return send_file(out_file, as_attachment=True)
-
-    # Download source
-    tmp_file = "/tmp/src_audio"
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}  # Buzzsprout sometimes blocks default requests
-        r = requests.get(audio_url, headers=headers, stream=True, timeout=60)
-        r.raise_for_status()
-        with open(tmp_file, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-        if os.path.getsize(tmp_file) == 0:
-            return "Downloaded file is empty", 500
-    except Exception as e:
-        return f"Error downloading audio: {e}", 500
-
-    # Convert to 40kbps mono MP3 using ffmpeg
-    try:
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", tmp_file,
-            "-ar", "44100",
-            "-ac", "1",
-            "-b:a", "40k",
-            out_file
-        ]
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        return f"Error converting audio: {e}", 500
-
-    return send_file(out_file, as_attachment=True)
+    else:
+        # If not yet generated, do on-demand download
+        download_and_convert(name)
+        if os.path.exists(out_file):
+            return send_file(out_file, as_attachment=True)
+        else:
+            return "MP3 not available yet, try later.", 503
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
