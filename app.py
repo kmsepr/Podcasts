@@ -1,88 +1,141 @@
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, send_file, render_template_string
 import feedparser
-import subprocess
-import uuid
-from apscheduler.schedulers.background import BackgroundScheduler
+import requests
+import os
 
 app = Flask(__name__)
 
-# Add all your podcast RSS feeds here:
+# -------------------------------------------------
+# 1. PODCAST LIST (ADD AS MANY AS YOU WANT)
+# -------------------------------------------------
 PODCASTS = {
     "outoffocus": "https://feeds.buzzsprout.com/2050847.rss",
-    "show2": "https://example.com/feed.xml",
-    "show3": "https://example.com/feed2.xml"
+    "newsminute": "https://rss.art19.com/the-news-minute",
+    "tech": "https://feeds.megaphone.fm/vergecast"
 }
 
-# Store latest episodes here:
-latest = {pid: {"title": None, "audio": None, "published": None} for pid in PODCASTS}
+# Store latest episode cache
+CACHE = {}
 
-def fetch_latest(pid, url):
+# -------------------------------------------------
+# 2. Helper – Fetch latest episode
+# -------------------------------------------------
+def fetch_latest(podcast_id):
+    url = PODCASTS[podcast_id]
     feed = feedparser.parse(url)
+
     if not feed.entries:
-        return
+        return None
+
     entry = feed.entries[0]
 
-    audio = None
-    if "enclosures" in entry and entry.enclosures:
-        audio = entry.enclosures[0].get("url")
+    enclosure_url = None
+    if "enclosures" in entry and len(entry.enclosures) > 0:
+        enclosure_url = entry.enclosures[0].href
 
-    latest[pid] = {
-        "title": entry.get("title"),
-        "audio": audio,
-        "published": entry.get("published")
+    return {
+        "podcast": podcast_id,
+        "title": entry.title,
+        "published": entry.get("published", "Unknown"),
+        "audio_url": enclosure_url,
     }
 
-def update_all():
-    for pid, url in PODCASTS.items():
-        fetch_latest(pid, url)
 
-# Scheduler: twice daily update
-scheduler = BackgroundScheduler()
-scheduler.add_job(update_all, "cron", hour="6,18")
-scheduler.start()
+# -------------------------------------------------
+# 3. Home page HTML (with buttons)
+# -------------------------------------------------
+HOME_PAGE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Podcast Downloader</title>
+    <style>
+        body { font-family: Arial; background: #f2f2f2; padding: 20px; }
+        .card {
+            background: white; padding: 20px; margin-bottom: 15px;
+            border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .btn {
+            background: #007bff; color: white; padding: 10px 15px;
+            border-radius: 6px; text-decoration: none;
+        }
+        .btn:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <h2>Available Podcasts</h2>
 
-# First update on startup
-with app.app_context():
-    update_all()
+    {% for pid, item in podcasts.items() %}
+    <div class="card">
+        <h3>{{ item.title }}</h3>
+        <p><b>ID:</b> {{ pid }}</p>
+        <p><b>Published:</b> {{ item.published }}</p>
 
-@app.route("/api/latest/<pid>")
-def api_latest(pid):
-    if pid not in latest:
-        return jsonify({"error": "Podcast ID not found"}), 404
-    if latest[pid]["audio"] is None:
-        return jsonify({"error": "No audio found"}), 404
-    return jsonify(latest[pid])
+        {% if item.audio_url %}
+        <a class="btn"
+           href="/download/{{ pid }}">
+           Download Latest Episode
+        </a>
+        {% else %}
+        <p>No audio file found.</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</body>
+</html>
+"""
 
-@app.route("/api/transcoded_latest/<pid>")
-def api_transcoded_latest(pid):
-    if pid not in latest:
-        return jsonify({"error": "Podcast ID not found"}), 404
-
-    audio_url = latest[pid]["audio"]
-    if not audio_url:
-        return jsonify({"error": "No audio URL"}), 404
-
-    tmp = f"/tmp/{uuid.uuid4()}.mp3"
-    try:
-        subprocess.run([
-            "ffmpeg", "-y", "-i", audio_url,
-            "-b:a", "24k", "-bufsize", "24k",
-            "-ac", "1", "-ar", "24000",
-            tmp
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
-        return send_file(tmp, mimetype="audio/mpeg")
-    except Exception as e:
-        return jsonify({"error": "ffmpeg failed", "details": str(e)})
-
+# -------------------------------------------------
+# 4. Home page route
+# -------------------------------------------------
 @app.route("/")
 def home():
-    return {
-        "podcasts": list(PODCASTS.keys()),
-        "endpoints": {
-            "latest": "/api/latest/<podcast_id>",
-            "transcoded": "/api/transcoded_latest/<podcast_id>"
-        }
-    }
+    data = {}
+    for pid in PODCASTS:
+        data[pid] = fetch_latest(pid)
 
+    return render_template_string(HOME_PAGE, podcasts=data)
+
+# -------------------------------------------------
+# 5. API endpoint – Latest JSON
+# -------------------------------------------------
+@app.route("/api/latest/<podcast_id>")
+def api_latest(podcast_id):
+    if podcast_id not in PODCASTS:
+        return jsonify({"error": "Invalid podcast ID"}), 404
+
+    latest = fetch_latest(podcast_id)
+    return jsonify(latest)
+
+# -------------------------------------------------
+# 6. Download handler
+# -------------------------------------------------
+@app.route("/download/<podcast_id>")
+def download_latest(podcast_id):
+
+    if podcast_id not in PODCASTS:
+        return "Invalid podcast ID", 404
+
+    latest = fetch_latest(podcast_id)
+    if not latest or not latest["audio_url"]:
+        return "No audio file available", 400
+
+    audio_url = latest["audio_url"]
+
+    # Download audio into temp file
+    filename = f"{podcast_id}.mp3"
+    filepath = f"/tmp/{filename}"
+
+    r = requests.get(audio_url, stream=True)
+    with open(filepath, "wb") as f:
+        for chunk in r.iter_content(1024):
+            f.write(chunk)
+
+    return send_file(filepath, as_attachment=True)
+
+# -------------------------------------------------
+# 7. Start app
+# -------------------------------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
