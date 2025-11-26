@@ -11,7 +11,7 @@ app = Flask(__name__)
 CACHE_DIR = "podcache"
 LOG_FILE = os.path.join(CACHE_DIR, "log.txt")
 META_FILE = os.path.join(CACHE_DIR, "meta.json")
-RSS_URL = "https://feeds.buzzsprout.com/2050847.rss"
+RSS_URL = "https://feeds.megaphone.fm/THGU4956605070"
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 
