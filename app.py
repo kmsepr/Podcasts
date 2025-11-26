@@ -13,7 +13,7 @@ app = Flask(__name__)
 # CONFIG
 # ----------------------------------------------------------
 
-RSS_URL = "https://anchor.fm/s/8fd39f70/podcast/rss"
+RSS_URL = "https://feeds.buzzsprout.com/2050847.rss"
 CACHE_DIR = "/mnt/data/podcache"
 
 CACHED_MP3 = os.path.join(CACHE_DIR, "todays_episode.mp3")
