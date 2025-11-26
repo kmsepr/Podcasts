@@ -2,9 +2,9 @@ import os
 import datetime
 import requests
 import feedparser
-from flask import Flask, send_file, render_template_string
-from apscheduler.schedulers.background import BackgroundScheduler
+from flask import Flask, send_file
 import subprocess
+from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
@@ -14,10 +14,9 @@ app = Flask(__name__)
 
 RSS_URL = "https://anchor.fm/s/8fd39f70/podcast/rss"
 CACHE_DIR = "/mnt/data/podcache"
-CACHED_MP3 = os.path.join(CACHE_DIR, "latest.mp3")
+CACHED_MP3 = os.path.join(CACHE_DIR, "todays_episode.mp3")
 LAST_REFRESH_FILE = os.path.join(CACHE_DIR, "last_refresh.txt")
 
-# Create directories
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # ----------------------------------------------------------
@@ -34,35 +33,42 @@ def read_last_refresh():
     with open(LAST_REFRESH_FILE, "r") as f:
         return datetime.datetime.fromisoformat(f.read().strip())
 
-
-def ffmpeg_available():
-    """Check if ffmpeg exists in container."""
+def ffmpeg_exists():
     return subprocess.call(["which", "ffmpeg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) == 0
 
-
 # ----------------------------------------------------------
-# FETCH + TRANSCODE LOGIC
+# LOGIC: FETCH TODAY'S EPISODE ONLY
 # ----------------------------------------------------------
 
-def refresh_latest_episode():
-    """Fetch RSS → download audio → transcode → cache."""
+def refresh_today_episode():
+    """Identify today's episode → download → transcode to 40kbps → cache."""
+    print("Refreshing today's episode...")
+
     try:
-        print("Refreshing latest episode...")
-
         feed = feedparser.parse(RSS_URL)
         if not feed.entries:
-            print("RSS empty")
+            print("RSS feed empty.")
             return
 
-        # Get Top 3 Episodes Only
-        latest_entries = feed.entries[:3]
+        today_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
 
-        # Use episode #1 (most recent)
-        episode = latest_entries[0]
-        audio_url = episode.enclosures[0]["href"]
+        today_episode = None
 
-        print("Downloading:", audio_url)
-        audio_data = requests.get(audio_url, timeout=20).content
+        for entry in feed.entries:
+            if hasattr(entry, "published"):
+                pub_date = datetime.datetime(*entry.published_parsed[:6])
+                if pub_date.strftime("%Y-%m-%d") == today_str:
+                    today_episode = entry
+                    break
+
+        if not today_episode:
+            print("No episode published today.")
+            return
+
+        audio_url = today_episode.enclosures[0]["href"]
+        print("Today's episode URL:", audio_url)
+
+        audio_data = requests.get(audio_url, timeout=30).content
 
         temp_in = os.path.join(CACHE_DIR, "temp_in.mp3")
         temp_out = os.path.join(CACHE_DIR, "temp_out.mp3")
@@ -70,95 +76,51 @@ def refresh_latest_episode():
         with open(temp_in, "wb") as f:
             f.write(audio_data)
 
-        # Transcoding — only if ffmpeg exists
-        if ffmpeg_available():
+        # Convert to 40 kbps MP3
+        if ffmpeg_exists():
             subprocess.call([
                 "ffmpeg", "-y",
                 "-i", temp_in,
                 "-codec:a", "libmp3lame",
-                "-b:a", "128k",
+                "-b:a", "40k",
                 temp_out
             ])
             os.replace(temp_out, CACHED_MP3)
         else:
-            # No ffmpeg — save original
             os.replace(temp_in, CACHED_MP3)
 
         write_last_refresh()
-        print("Refresh complete.")
+        print("Today's episode refreshed.")
 
     except Exception as e:
-        print("Refresh error:", e)
-
+        print("Error:", e)
 
 # ----------------------------------------------------------
-# APSCHEDULER – refresh every 12 hours
+# SCHEDULER – runs every 24 hours
 # ----------------------------------------------------------
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(refresh_latest_episode, "interval", hours=12)
+scheduler.add_job(refresh_today_episode, "interval", hours=24)
 scheduler.start()
 
 # First run: if cache missing → force refresh
 if not os.path.exists(CACHED_MP3):
-    refresh_latest_episode()
-
+    refresh_today_episode()
 
 # ----------------------------------------------------------
-# FLASK ROUTES
+# ROUTES
 # ----------------------------------------------------------
-
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>Podcast Cache</title>
-<style>
-body { font-family: Arial; padding: 20px; }
-.btn {
-  padding: 14px 20px;
-  background: #007bff; color: white;
-  border-radius: 6px; text-decoration: none;
-}
-</style>
-</head>
-<body>
-<h2>Latest 3 Episodes</h2>
-<ul>
-{% for ep in episodes %}
-  <li><b>{{ep.title}}</b> — {{ep.published}}</li>
-{% endfor %}
-</ul>
-
-<h3>Download Cached Latest Episode</h3>
-<a href="/download" class="btn">Download MP3</a>
-
-<p>Last refresh: <b>{{last_refresh}}</b></p>
-</body>
-</html>
-"""
 
 @app.route("/")
-def index():
-    feed = feedparser.parse(RSS_URL)
-    episodes = feed.entries[:3]
-
-    last_refresh = read_last_refresh()
-
-    return render_template_string(
-        HTML_TEMPLATE,
-        episodes=episodes,
-        last_refresh=last_refresh if last_refresh else "Never"
-    )
-
+def home():
+    last = read_last_refresh()
+    return f"Last refreshed: {last if last else 'Never'}"
 
 @app.route("/download")
 def download():
     if not os.path.exists(CACHED_MP3):
-        return "File not cached yet. Try again later.", 404
-
+        return "File not ready yet.", 404
     return send_file(CACHED_MP3, as_attachment=True)
-
 
 # ----------------------------------------------------------
 
