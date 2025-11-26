@@ -247,6 +247,33 @@ def view_log(pid):
         return "No logs yet."
     return send_file(file_path)
 
+@app.route("/")
+def index():
+    html = "<html><body style='font-family:Arial;padding:20px;'>"
+    html += "<h2>Available Podcasts</h2>"
+    html += "<div style='display:flex;gap:20px;flex-wrap:wrap;'>"
+
+    for pid in PODCASTS:
+        rss_url, CACHE_DIR = get_rss_and_cache(pid)
+        meta = load_meta(CACHE_DIR)
+
+        thumb_path = f"/{pid}/thumbnail" if os.path.exists(os.path.join(CACHE_DIR, 'latest_thumb.jpg')) else None
+        title = meta.get("title", "Latest episode not fetched yet")
+
+        html += "<div style='width:250px;border:1px solid #ccc;border-radius:10px;padding:15px;text-align:center;'>"
+        html += f"<h3>{pid.upper()}</h3>"
+
+        if thumb_path:
+            html += f"<img src='{thumb_path}' width='220' style='border-radius:10px;'><br><br>"
+        else:
+            html += "<div style='width:220px;height:220px;background:#eee;border-radius:10px;line-height:220px;'>No Thumbnail</div><br>"
+
+        html += f"<p>{title}</p>"
+        html += f"<a href='/{pid}' style='padding:8px 16px;background:#2196F3;color:white;text-decoration:none;border-radius:6px;'>Open</a>"
+        html += "</div>"
+
+    html += "</div></body></html>"
+    return html
 
 
 # ------------------------------------------------------------
