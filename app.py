@@ -8,64 +8,104 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-CACHE_DIR = "podcache"
-LOG_FILE = os.path.join(CACHE_DIR, "log.txt")
-META_FILE = os.path.join(CACHE_DIR, "meta.json")
-RSS_URL = "https://feeds.buzzsprout.com/2050847.rss"
+# ------------------------------------------------------------
+# SIMPLE PODCAST DICTIONARY
+# ------------------------------------------------------------
+PODCASTS = {
+    "out": "https://feeds.buzzsprout.com/2050847.rss",
+    "in": "https://feeds.megaphone.fm/THGU4956605070",
+    "firsts": "https://feeds.buzzsprout.com/1194665.rss",
+}
 
-os.makedirs(CACHE_DIR, exist_ok=True)
+def get_rss_and_cache(pid):
+    """Returns RSS URL and cache directory for a podcast ID."""
+    if pid not in PODCASTS:
+        return None, None
+    rss = PODCASTS[pid]
+    cache = f"podcache_{pid}"
+    os.makedirs(cache, exist_ok=True)
+    return rss, cache
 
-def log(msg):
+
+# ------------------------------------------------------------
+# Logging helper
+# ------------------------------------------------------------
+def log(msg, cache):
     timestamp = datetime.now().isoformat()
     line = f"[{timestamp}] {msg}"
     print(line)
-    with open(LOG_FILE, "a") as f:
+
+    with open(os.path.join(cache, "log.txt"), "a") as f:
         f.write(line + "\n")
 
-def load_meta():
-    if not os.path.exists(META_FILE):
+
+# ------------------------------------------------------------
+# Load / Save metadata
+# ------------------------------------------------------------
+def load_meta(cache):
+    meta_file = os.path.join(cache, "meta.json")
+    if not os.path.exists(meta_file):
         return {}
     try:
-        return json.load(open(META_FILE))
+        return json.load(open(meta_file))
     except:
         return {}
 
-def save_meta(data):
-    with open(META_FILE, "w") as f:
+def save_meta(cache, data):
+    meta_file = os.path.join(cache, "meta.json")
+    with open(meta_file, "w") as f:
         json.dump(data, f)
 
-def refresh_latest_episode(force=False):
 
-    meta = load_meta()
+# ------------------------------------------------------------
+# MAIN REFRESH (runs only if 24 hours passed)
+# ------------------------------------------------------------
+def refresh_latest_episode(pid, force=False):
 
+    rss_url, CACHE_DIR = get_rss_and_cache(pid)
+    if not rss_url:
+        return
+
+    meta = load_meta(CACHE_DIR)
+
+    # Check last update time
     if not force and "last_update" in meta:
         last = datetime.fromisoformat(meta["last_update"])
         if datetime.now() - last < timedelta(hours=24):
-            log("⏳ Already updated in last 24 hours. Skipping refresh.")
+            log("⏳ Already updated in last 24 hours. Skipping refresh.", CACHE_DIR)
             return
 
-    log("------------------------------------------------------------")
-    log("Refreshing latest episode (forced=" + str(force) + ")")
-    log("------------------------------------------------------------")
+    log("------------------------------------------------------------", CACHE_DIR)
+    log(f"Refreshing latest episode for {pid} (force={force})", CACHE_DIR)
+    log("------------------------------------------------------------", CACHE_DIR)
 
-    feed = feedparser.parse(RSS_URL)
+    log(f"Fetching RSS feed: {rss_url}", CACHE_DIR)
+    feed = feedparser.parse(rss_url)
+
     if not feed.entries:
-        log("❌ ERROR: Feed has no episodes!")
+        log("❌ ERROR: Feed has no episodes!", CACHE_DIR)
         return
 
     latest = feed.entries[0]
 
+    # ----------------------------------
+    # Get audio URL
+    # ----------------------------------
     if not latest.enclosures:
-        log("❌ ERROR: No audio file found in feed.")
+        log("❌ ERROR: No audio file found in feed.", CACHE_DIR)
         return
 
     audio_url = latest.enclosures[0].href
-    log(f"Audio URL: {audio_url}")
+    log(f"Audio URL: {audio_url}", CACHE_DIR)
 
     original_audio = os.path.join(CACHE_DIR, "latest_original.mp3")
     final_mp3 = os.path.join(CACHE_DIR, "latest.mp3")
+    thumb_path = os.path.join(CACHE_DIR, "latest_thumb.jpg")
 
-    log("Downloading audio via FFmpeg...")
+    # ----------------------------------
+    # Download audio using FFmpeg
+    # ----------------------------------
+    log("Downloading audio via FFmpeg...", CACHE_DIR)
     proc = subprocess.run([
         "ffmpeg", "-y",
         "-headers", "User-Agent: Mozilla/5.0",
@@ -73,14 +113,17 @@ def refresh_latest_episode(force=False):
         original_audio
     ], capture_output=True, text=True)
 
-    log(proc.stdout)
-    log(proc.stderr)
+    log(proc.stdout, CACHE_DIR)
+    log(proc.stderr, CACHE_DIR)
 
     if not os.path.exists(original_audio) or os.path.getsize(original_audio) < 50000:
-        log("❌ Download failed (file too small). Aborting refresh.")
+        log("❌ Download failed (file too small). Aborting refresh.", CACHE_DIR)
         return
 
-    log("Converting to 40kbps MP3...")
+    # ----------------------------------
+    # Convert to 40 kbps MP3
+    # ----------------------------------
+    log("Converting to 40kbps MP3...", CACHE_DIR)
     proc = subprocess.run([
         "ffmpeg", "-y",
         "-i", original_audio,
@@ -88,67 +131,133 @@ def refresh_latest_episode(force=False):
         final_mp3
     ], capture_output=True, text=True)
 
-    log(proc.stdout)
-    log(proc.stderr)
+    log(proc.stdout, CACHE_DIR)
+    log(proc.stderr, CACHE_DIR)
 
     if not os.path.exists(final_mp3):
-        log("❌ Conversion failed. No MP3 created.")
+        log("❌ Conversion failed. No MP3 created.", CACHE_DIR)
         return
 
     # ----------------------------------
-    # Save description (NEW)
+    # Download thumbnail
     # ----------------------------------
-    desc = latest.get("summary") or latest.get("description") or ""
-    meta["description"] = desc
+    image_url = None
+    if hasattr(latest, "image") and hasattr(latest.image, "href"):
+        image_url = latest.image.href
 
+    if image_url:
+        try:
+            log(f"Downloading thumbnail → {thumb_path}", CACHE_DIR)
+            img = requests.get(image_url, timeout=20)
+            with open(thumb_path, "wb") as f:
+                f.write(img.content)
+            log("✔ Thumbnail saved.", CACHE_DIR)
+        except:
+            log("❌ Thumbnail download error.", CACHE_DIR)
+
+    # ----------------------------------
+    # Save metadata
+    # ----------------------------------
     meta["last_update"] = datetime.now().isoformat()
     meta["title"] = latest.title
-    save_meta(meta)
+    save_meta(CACHE_DIR, meta)
 
-    log("✔ Refresh complete.")
+    log("✔ Refresh complete.", CACHE_DIR)
 
-@app.route("/")
-def home():
-    meta = load_meta()
+
+
+# ------------------------------------------------------------
+# ROUTES
+# ------------------------------------------------------------
+
+@app.route("/<pid>")
+def home(pid):
+
+    rss_url, CACHE_DIR = get_rss_and_cache(pid)
+    if not rss_url:
+        return "Podcast ID not found.", 404
+
+    meta = load_meta(CACHE_DIR)
     mp3_exists = os.path.exists(os.path.join(CACHE_DIR, "latest.mp3"))
+    thumb_exists = os.path.exists(os.path.join(CACHE_DIR, "latest_thumb.jpg"))
 
     html = "<html><body style='font-family:Arial;padding:20px;'>"
-    html += "<h2>Latest Episode</h2>"
+    html += f"<h2>Latest Episode ({pid})</h2>"
 
     if "title" in meta:
         html += f"<h3>{meta['title']}</h3>"
 
-    if "description" in meta:
-        html += f"<p>{meta['description']}</p><br>"
+    if thumb_exists:
+        html += f"<img src='/{pid}/thumbnail' width='300' style='border-radius:10px;'><br><br>"
+    else:
+        html += "Thumbnail loading…<br><br>"
 
     if mp3_exists:
-        html += "<a href='/download' style='padding:10px 20px;background:#2196F3;color:white;text-decoration:none;border-radius:6px;'>⬇ Download MP3</a>"
+        html += f"<a href='/{pid}/download' style='padding:10px 20px;background:#2196F3;color:white;text-decoration:none;border-radius:6px;'>⬇ Download MP3</a>"
     else:
         html += "MP3 not ready."
 
     html += "</body></html>"
     return html
 
-@app.route("/download")
-def download():
+
+
+@app.route("/<pid>/download")
+def download(pid):
+    rss_url, CACHE_DIR = get_rss_and_cache(pid)
+    if not rss_url:
+        return "Invalid ID", 404
+
     file_path = os.path.join(CACHE_DIR, "latest.mp3")
     if not os.path.exists(file_path):
         return "MP3 not ready.", 404
+
     return send_file(file_path, as_attachment=True)
 
-@app.route("/refresh")
-def manual_refresh():
-    refresh_latest_episode(force=True)
-    return "Manual refresh done."
 
-@app.route("/log")
-def view_log():
-    if not os.path.exists(LOG_FILE):
+
+@app.route("/<pid>/thumbnail")
+def thumbnail(pid):
+    rss_url, CACHE_DIR = get_rss_and_cache(pid)
+    if not rss_url:
+        return "Invalid ID", 404
+
+    file_path = os.path.join(CACHE_DIR, "latest_thumb.jpg")
+    if not os.path.exists(file_path):
+        return "Thumbnail not ready.", 404
+
+    return send_file(file_path)
+
+
+
+@app.route("/<pid>/refresh")
+def manual_refresh(pid):
+    refresh_latest_episode(pid, force=True)
+    return f"Manual refresh done for {pid}."
+
+
+@app.route("/<pid>/log")
+def view_log(pid):
+    rss_url, CACHE_DIR = get_rss_and_cache(pid)
+    if not rss_url:
+        return "Invalid ID", 404
+
+    file_path = os.path.join(CACHE_DIR, "log.txt")
+    if not os.path.exists(file_path):
         return "No logs yet."
-    return send_file(LOG_FILE)
+    return send_file(file_path)
 
-log("Checking if daily refresh required...")
-refresh_latest_episode(force=False)
 
+
+# ------------------------------------------------------------
+# On startup auto-refresh each podcast only if needed
+# ------------------------------------------------------------
+for pid in PODCASTS:
+    refresh_latest_episode(pid, force=False)
+
+
+# ------------------------------------------------------------
+# Run app
+# ------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
