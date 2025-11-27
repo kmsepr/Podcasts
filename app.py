@@ -8,112 +8,154 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-CACHE_DIR = "podcache"
-LOG_FILE = os.path.join(CACHE_DIR, "log.txt")
-META_FILE = os.path.join(CACHE_DIR, "meta.json")
-RSS_URL = "https://feeds.megaphone.fm/THGU4956605070"
+BASE_CACHE = "podcache"
+os.makedirs(BASE_CACHE, exist_ok=True)
 
-os.makedirs(CACHE_DIR, exist_ok=True)
+# ---------------------------------------------------------
+# Multiple podcasts can be added here
+# ---------------------------------------------------------
+PODCASTS = {
+    "in": {
+        "name": "In Focus",
+        "rss": "https://feeds.megaphone.fm/THGU4956605070"
+    },
+    "out": {
+        "name": "Out of focus",
+        "rss": "https://feeds.buzzsprout.com/2050847.rss"
+    }
+}
 
-def log(msg):
+def paths(pod_id):
+    """Return all file paths for a podcast"""
+    folder = os.path.join(BASE_CACHE, pod_id)
+    os.makedirs(folder, exist_ok=True)
+
+    return {
+        "folder": folder,
+        "log": os.path.join(folder, "log.txt"),
+        "meta": os.path.join(folder, "meta.json"),
+        "original": os.path.join(folder, "latest_original.mp3"),
+        "final": os.path.join(folder, "latest.mp3"),
+    }
+
+def log(pod_id, msg):
+    p = paths(pod_id)
     timestamp = datetime.now().isoformat()
     line = f"[{timestamp}] {msg}"
-    print(line)
-    with open(LOG_FILE, "a") as f:
+
+    print(f"[{pod_id}] {line}")
+    with open(p["log"], "a") as f:
         f.write(line + "\n")
 
-def load_meta():
-    if not os.path.exists(META_FILE):
+def load_meta(pod_id):
+    p = paths(pod_id)
+    if not os.path.exists(p["meta"]):
         return {}
     try:
-        return json.load(open(META_FILE))
+        return json.load(open(p["meta"]))
     except:
         return {}
 
-def save_meta(data):
-    with open(META_FILE, "w") as f:
+def save_meta(pod_id, data):
+    p = paths(pod_id)
+    with open(p["meta"], "w") as f:
         json.dump(data, f)
 
-def refresh_latest_episode(force=False):
+# ---------------------------------------------------------
+# Main download & convert function (per podcast)
+# ---------------------------------------------------------
+def refresh_podcast(pod_id, force=False):
 
-    meta = load_meta()
+    info = PODCASTS[pod_id]
+    p = paths(pod_id)
+
+    meta = load_meta(pod_id)
 
     if not force and "last_update" in meta:
         last = datetime.fromisoformat(meta["last_update"])
         if datetime.now() - last < timedelta(hours=24):
-            log("⏳ Already updated in last 24 hours. Skipping refresh.")
+            log(pod_id, "⏳ Already updated in last 24 hours. Skipping.")
             return
 
-    log("------------------------------------------------------------")
-    log("Refreshing latest episode (forced=" + str(force) + ")")
-    log("------------------------------------------------------------")
+    log(pod_id, "------------------------------------------------------------")
+    log(pod_id, f"Refreshing podcast: {info['name']} (forced={force})")
+    log(pod_id, "------------------------------------------------------------")
 
-    feed = feedparser.parse(RSS_URL)
+    feed = feedparser.parse(info["rss"])
     if not feed.entries:
-        log("❌ ERROR: Feed has no episodes!")
+        log(pod_id, "❌ ERROR: Feed has no episodes!")
         return
 
     latest = feed.entries[0]
 
     if not latest.enclosures:
-        log("❌ ERROR: No audio file found in feed.")
+        log(pod_id, "❌ ERROR: No audio file found.")
         return
 
     audio_url = latest.enclosures[0].href
-    log(f"Audio URL: {audio_url}")
+    log(pod_id, f"Audio URL: {audio_url}")
 
-    original_audio = os.path.join(CACHE_DIR, "latest_original.mp3")
-    final_mp3 = os.path.join(CACHE_DIR, "latest.mp3")
-
-    log("Downloading audio via FFmpeg...")
+    # Download
     proc = subprocess.run([
         "ffmpeg", "-y",
         "-headers", "User-Agent: Mozilla/5.0",
         "-i", audio_url,
-        original_audio
+        p["original"]
     ], capture_output=True, text=True)
 
-    log(proc.stdout)
-    log(proc.stderr)
+    log(pod_id, proc.stdout)
+    log(pod_id, proc.stderr)
 
-    if not os.path.exists(original_audio) or os.path.getsize(original_audio) < 50000:
-        log("❌ Download failed (file too small). Aborting refresh.")
+    if not os.path.exists(p["original"]) or os.path.getsize(p["original"]) < 50000:
+        log(pod_id, "❌ Download failed (file too small). Aborting.")
         return
 
-    log("Converting to 40kbps MP3...")
+    # Convert to low bitrate MP3
     proc = subprocess.run([
         "ffmpeg", "-y",
-        "-i", original_audio,
+        "-i", p["original"],
         "-b:a", "40k",
-        final_mp3
+        p["final"]
     ], capture_output=True, text=True)
 
-    log(proc.stdout)
-    log(proc.stderr)
+    log(pod_id, proc.stdout)
+    log(pod_id, proc.stderr)
 
-    if not os.path.exists(final_mp3):
-        log("❌ Conversion failed. No MP3 created.")
+    if not os.path.exists(p["final"]):
+        log(pod_id, "❌ Conversion failed.")
         return
 
-    # ----------------------------------
-    # Save description (NEW)
-    # ----------------------------------
+    # Save metadata
     desc = latest.get("summary") or latest.get("description") or ""
-    meta["description"] = desc
-
-    meta["last_update"] = datetime.now().isoformat()
     meta["title"] = latest.title
-    save_meta(meta)
+    meta["description"] = desc
+    meta["last_update"] = datetime.now().isoformat()
+    save_meta(pod_id, meta)
 
-    log("✔ Refresh complete.")
+    log(pod_id, "✔ Podcast refresh complete.")
+
+# ---------------------------------------------------------
+# ROUTES
+# ---------------------------------------------------------
 
 @app.route("/")
 def home():
-    meta = load_meta()
-    mp3_exists = os.path.exists(os.path.join(CACHE_DIR, "latest.mp3"))
+    html = "<h2>Available Podcasts</h2><ul>"
+    for pid, info in PODCASTS.items():
+        html += f"<li><a href='/pod/{pid}'>{info['name']}</a></li>"
+    html += "</ul>"
+    return html
 
-    html = "<html><body style='font-family:Arial;padding:20px;'>"
-    html += "<h2>Latest Episode</h2>"
+@app.route("/pod/<pod_id>")
+def view_podcast(pod_id):
+    if pod_id not in PODCASTS:
+        return "Invalid podcast ID"
+
+    meta = load_meta(pod_id)
+    p = paths(pod_id)
+    mp3_exists = os.path.exists(p["final"])
+
+    html = f"<h2>{PODCASTS[pod_id]['name']}</h2>"
 
     if "title" in meta:
         html += f"<h3>{meta['title']}</h3>"
@@ -122,33 +164,39 @@ def home():
         html += f"<p>{meta['description']}</p><br>"
 
     if mp3_exists:
-        html += "<a href='/download' style='padding:10px 20px;background:#2196F3;color:white;text-decoration:none;border-radius:6px;'>⬇ Download MP3</a>"
+        html += f"<a href='/pod/{pod_id}/download'>⬇ Download MP3</a>"
     else:
         html += "MP3 not ready."
 
-    html += "</body></html>"
+    html += f"<br><br><a href='/pod/{pod_id}/refresh'>🔄 Refresh</a>"
+    html += f"<br><a href='/pod/{pod_id}/log'>📜 View Log</a>"
+
     return html
 
-@app.route("/download")
-def download():
-    file_path = os.path.join(CACHE_DIR, "latest.mp3")
-    if not os.path.exists(file_path):
-        return "MP3 not ready.", 404
-    return send_file(file_path, as_attachment=True)
+@app.route("/pod/<pod_id>/download")
+def download(pod_id):
+    p = paths(pod_id)
+    if not os.path.exists(p["final"]):
+        return "MP3 not ready", 404
+    return send_file(p["final"], as_attachment=True)
 
-@app.route("/refresh")
-def manual_refresh():
-    refresh_latest_episode(force=True)
+@app.route("/pod/<pod_id>/refresh")
+def manual_refresh(pod_id):
+    refresh_podcast(pod_id, force=True)
     return "Manual refresh done."
 
-@app.route("/log")
-def view_log():
-    if not os.path.exists(LOG_FILE):
+@app.route("/pod/<pod_id>/log")
+def view_log(pod_id):
+    p = paths(pod_id)
+    if not os.path.exists(p["log"]):
         return "No logs yet."
-    return send_file(LOG_FILE)
+    return send_file(p["log"])
 
-log("Checking if daily refresh required...")
-refresh_latest_episode(force=False)
+# Auto-check all podcasts on startup
+for pid in PODCASTS:
+    log(pid, "Checking daily refresh...")
+    refresh_podcast(pid, force=False)
 
+# Run
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
