@@ -98,18 +98,18 @@ def refresh_podcast(pod_id, force=False):
 
     # Download
     proc = subprocess.run([
-    "ffmpeg", "-y",
-    "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-    "-headers", (
-        "User-Agent: Mozilla/5.0\r\n"
-        "Accept: */*\r\n"
-        "Referer: https://www.buzzsprout.com/\r\n"
-    ),
-    "-i", audio_url,
-    "-fflags", "nobuffer",
-    "-timeout", "5000000",
-    p["original"]
-], capture_output=True, text=True)
+        "ffmpeg", "-y",
+        "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+        "-headers", (
+            "User-Agent: Mozilla/5.0\r\n"
+            "Accept: */*\r\n"
+            "Referer: https://www.buzzsprout.com/\r\n"
+        ),
+        "-i", audio_url,
+        "-fflags", "nobuffer",
+        "-timeout", "5000000",
+        p["original"]
+    ], capture_output=True, text=True)
 
     log(pod_id, proc.stdout)
     log(pod_id, proc.stderr)
@@ -118,11 +118,16 @@ def refresh_podcast(pod_id, force=False):
         log(pod_id, "❌ Download failed (file too small). Aborting.")
         return
 
-    # Convert to low bitrate MP3
+    # ---------------------------------------------------------
+    # Convert to low bitrate MP3 (40 kbps mono)
+    # ---------------------------------------------------------
     proc = subprocess.run([
         "ffmpeg", "-y",
         "-i", p["original"],
-        "-b:a", "40k",
+        "-ac", "1",                 # mono
+        "-codec:a", "libmp3lame",   # MP3 encoder
+        "-b:a", "40k",              # 40 kbps CBR
+        "-ar", "22050",             # 22.05 kHz sample rate (more compatible)
         p["final"]
     ], capture_output=True, text=True)
 
@@ -217,7 +222,6 @@ def view_podcast(pod_id):
     if pod_id not in PODCASTS:
         return "Invalid podcast ID"
 
-    # 🔥 Automatic safe refresh (ONLY when visiting page)
     refresh_podcast(pod_id, force=False)
 
     meta = load_meta(pod_id)
