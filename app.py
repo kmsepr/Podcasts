@@ -141,10 +141,68 @@ def refresh_podcast(pod_id, force=False):
 
 @app.route("/")
 def home():
-    html = "<h2>Available Podcasts</h2><ul>"
+    html = """
+    <html>
+    <head>
+        <title>Podcasts</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 600px;
+                margin: auto;
+                padding: 20px;
+                background: #f8f9fa;
+            }
+            h2 {
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            .pod {
+                padding: 15px;
+                margin: 12px 0;
+                background: white;
+                border-radius: 10px;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            }
+            .pod h3 {
+                margin: 0 0 10px 0;
+            }
+            .btn-row a {
+                display: inline-block;
+                padding: 8px 12px;
+                margin-right: 10px;
+                background: #007bff;
+                color: white;
+                text-decoration: none;
+                border-radius: 6px;
+                font-size: 14px;
+            }
+            .btn-row a:last-child {
+                background: #6c757d;
+            }
+        </style>
+    </head>
+    <body>
+
+    <h2>🎙 Available Podcasts</h2>
+    """
+
     for pid, info in PODCASTS.items():
-        html += f"<li><a href='/pod/{pid}'>{info['name']}</a></li>"
-    html += "</ul>"
+        html += f"""
+        <div class='pod'>
+            <h3>{info['name']}</h3>
+            <div class='btn-row'>
+                <a href='/pod/{pid}'>Open</a>
+                <a href='/pod/{pid}/refresh'>Refresh</a>
+            </div>
+        </div>
+        """
+
+    html += """
+    </body>
+    </html>
+    """
+
     return html
 
 @app.route("/pod/<pod_id>")
