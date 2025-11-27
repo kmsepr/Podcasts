@@ -124,10 +124,10 @@ def refresh_podcast(pod_id, force=False):
     proc = subprocess.run([
         "ffmpeg", "-y",
         "-i", p["original"],
-        "-ac", "1",                 # mono
-        "-codec:a", "libmp3lame",   # MP3 encoder
-        "-b:a", "40k",              # 40 kbps CBR
-        "-ar", "22050",             # 22.05 kHz sample rate (more compatible)
+        "-ac", "1",
+        "-codec:a", "libmp3lame",
+        "-b:a", "40k",
+        "-ar", "22050",
         p["final"]
     ], capture_output=True, text=True)
 
@@ -235,8 +235,18 @@ def view_podcast(pod_id):
 
     html += f"<p>{meta.get('description', '')}</p>"
 
+    # -------------------------------
+    # INLINE AUDIO PLAYER (added)
+    # -------------------------------
     if mp3_exists:
-        html += f"<br><a href='/pod/{pod_id}/download'>⬇ Download MP3</a>"
+        html += f"""
+            <br><br>
+            <audio controls style="width:100%;">
+                <source src="/pod/{pod_id}/stream" type="audio/mpeg">
+                Your browser does not support audio playback.
+            </audio>
+            <br><a href='/pod/{pod_id}/download'>⬇ Download MP3</a>
+        """
     else:
         html += "<br>MP3 not ready."
 
@@ -244,6 +254,16 @@ def view_podcast(pod_id):
     html += f"<br><a href='/pod/{pod_id}/log'>📜 View Log</a>"
 
     return html
+
+# -------------------------------
+# STREAM ROUTE (added)
+# -------------------------------
+@app.route("/pod/<pod_id>/stream")
+def stream(pod_id):
+    p = paths(pod_id)
+    if not os.path.exists(p["final"]):
+        return "MP3 not ready", 404
+    return send_file(p["final"])
 
 @app.route("/pod/<pod_id>/download")
 def download(pod_id):
