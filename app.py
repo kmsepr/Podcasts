@@ -16,11 +16,11 @@ os.makedirs(BASE_CACHE, exist_ok=True)
 # ---------------------------------------------------------
 PODCASTS = {
     "in": {
-        "name": "In Focus",
+        "name": "In",
         "rss": "https://feeds.megaphone.fm/THGU4956605070"
     },
     "out": {
-        "name": "Out of focus",
+        "name": "Out",
         "rss": "https://feeds.buzzsprout.com/2050847.rss"
     }
 }
@@ -210,7 +210,6 @@ def view_podcast(pod_id):
     if pod_id not in PODCASTS:
         return "Invalid podcast ID"
 
-    # 🔥 Automatic safe refresh (ONLY when visiting page)
     refresh_podcast(pod_id, force=False)
 
     meta = load_meta(pod_id)
@@ -225,6 +224,7 @@ def view_podcast(pod_id):
     html += f"<p>{meta.get('description', '')}</p>"
 
     if mp3_exists:
+        html += f"<br><a href='/pod/{pod_id}/listen'>▶ Listen Online</a>"
         html += f"<br><a href='/pod/{pod_id}/download'>⬇ Download MP3</a>"
     else:
         html += "<br>MP3 not ready."
@@ -254,11 +254,64 @@ def view_log(pod_id):
     return send_file(p["log"])
 
 # ---------------------------------------------------------
-# IMPORTANT: Removed startup refresh (Koyeb fix)
+# NEW: Inline listen page
+# ---------------------------------------------------------
+@app.route("/pod/<pod_id>/listen")
+def listen(pod_id):
+    p = paths(pod_id)
+    if not os.path.exists(p["final"]):
+        return "MP3 not ready", 404
+
+    meta = load_meta(pod_id)
+    title = meta.get("title", "Episode")
+
+    return f"""
+    <html>
+    <head>
+        <title>Listen – {title}</title>
+        <style>
+            body {{
+                font-family: Arial;
+                max-width: 600px;
+                margin: auto;
+                padding: 20px;
+            }}
+            audio {{
+                width: 100%;
+                margin-top: 20px;
+            }}
+        </style>
+    </head>
+    <body>
+        <h2>{title}</h2>
+        <audio controls>
+            <source src='/pod/{pod_id}/stream' type='audio/mpeg'>
+            Your browser does not support audio playback.
+        </audio>
+    </body>
+    </html>
+    """
+
+# ---------------------------------------------------------
+# NEW: Proper streaming route (fixes buffering)
+# ---------------------------------------------------------
+@app.route("/pod/<pod_id>/stream")
+def stream(pod_id):
+    p = paths(pod_id)
+    if not os.path.exists(p["final"]):
+        return "MP3 not ready", 404
+
+    return send_file(
+        p["final"],
+        mimetype="audio/mpeg",
+        conditional=True
+    )
+
+# ---------------------------------------------------------
+# No startup refresh
 # ---------------------------------------------------------
 
 print("🚀 App started — waiting for podcast requests (no startup refresh).")
 
-# Run
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
