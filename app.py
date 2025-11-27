@@ -98,11 +98,18 @@ def refresh_podcast(pod_id, force=False):
 
     # Download
     proc = subprocess.run([
-        "ffmpeg", "-y",
-        "-headers", "User-Agent: Mozilla/5.0",
-        "-i", audio_url,
-        p["original"]
-    ], capture_output=True, text=True)
+    "ffmpeg", "-y",
+    "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+    "-headers", (
+        "User-Agent: Mozilla/5.0\r\n"
+        "Accept: */*\r\n"
+        "Referer: https://www.buzzsprout.com/\r\n"
+    ),
+    "-i", audio_url,
+    "-fflags", "nobuffer",
+    "-timeout", "5000000",
+    p["original"]
+], capture_output=True, text=True)
 
     log(pod_id, proc.stdout)
     log(pod_id, proc.stderr)
