@@ -71,10 +71,11 @@ def refresh_podcast(pod_id, force=False):
 
     meta = load_meta(pod_id)
 
+    # Skip if updated in last 24 hours
     if not force and "last_update" in meta:
         last = datetime.fromisoformat(meta["last_update"])
         if datetime.now() - last < timedelta(hours=24):
-            log(pod_id, "⏳ Already updated in last 24 hours. Skipping.")
+            log(pod_id, "⏳ Already updated in last 24 hours. Skipping refresh.")
             return
 
     log(pod_id, "------------------------------------------------------------")
@@ -132,7 +133,7 @@ def refresh_podcast(pod_id, force=False):
     meta["last_update"] = datetime.now().isoformat()
     save_meta(pod_id, meta)
 
-    log(pod_id, "✔ Podcast refresh complete.")
+    log(pod_id, "✔ Refresh complete.")
 
 # ---------------------------------------------------------
 # ROUTES
@@ -151,6 +152,9 @@ def view_podcast(pod_id):
     if pod_id not in PODCASTS:
         return "Invalid podcast ID"
 
+    # 🔥 Automatic safe refresh (ONLY when visiting page)
+    refresh_podcast(pod_id, force=False)
+
     meta = load_meta(pod_id)
     p = paths(pod_id)
     mp3_exists = os.path.exists(p["final"])
@@ -160,15 +164,14 @@ def view_podcast(pod_id):
     if "title" in meta:
         html += f"<h3>{meta['title']}</h3>"
 
-    if "description" in meta:
-        html += f"<p>{meta['description']}</p><br>"
+    html += f"<p>{meta.get('description', '')}</p>"
 
     if mp3_exists:
-        html += f"<a href='/pod/{pod_id}/download'>⬇ Download MP3</a>"
+        html += f"<br><a href='/pod/{pod_id}/download'>⬇ Download MP3</a>"
     else:
-        html += "MP3 not ready."
+        html += "<br>MP3 not ready."
 
-    html += f"<br><br><a href='/pod/{pod_id}/refresh'>🔄 Refresh</a>"
+    html += f"<br><br><a href='/pod/{pod_id}/refresh'>🔄 Force Refresh</a>"
     html += f"<br><a href='/pod/{pod_id}/log'>📜 View Log</a>"
 
     return html
@@ -192,10 +195,11 @@ def view_log(pod_id):
         return "No logs yet."
     return send_file(p["log"])
 
-# Auto-check all podcasts on startup
-for pid in PODCASTS:
-    log(pid, "Checking daily refresh...")
-    refresh_podcast(pid, force=False)
+# ---------------------------------------------------------
+# IMPORTANT: Removed startup refresh (Koyeb fix)
+# ---------------------------------------------------------
+
+print("🚀 App started — waiting for podcast requests (no startup refresh).")
 
 # Run
 if __name__ == "__main__":
