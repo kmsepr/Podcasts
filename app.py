@@ -1,4 +1,4 @@
-from flask import Flask, send_file
+from flask import Flask, send_file, Response, request
 import requests
 import feedparser
 import subprocess
@@ -14,7 +14,7 @@ BASE_CACHE = "podcache"
 os.makedirs(BASE_CACHE, exist_ok=True)
 
 # ---------------------------------------------------------
-# Multiple podcasts can be added here
+# PODCAST LIST
 # ---------------------------------------------------------
 PODCASTS = {
     "in": {
@@ -22,11 +22,14 @@ PODCASTS = {
         "rss": "https://feeds.megaphone.fm/THGU4956605070"
     },
     "out": {
-        "name": "Out of focus",
+        "name": "Out of Focus",
         "rss": "https://feeds.buzzsprout.com/2050847.rss"
     }
 }
 
+# ---------------------------------------------------------
+# PATH HELPERS
+# ---------------------------------------------------------
 def paths(pod_id):
     folder = os.path.join(BASE_CACHE, pod_id)
     os.makedirs(folder, exist_ok=True)
@@ -39,6 +42,7 @@ def paths(pod_id):
         "final": os.path.join(folder, "latest.mp3"),
     }
 
+
 def log(pod_id, msg):
     p = paths(pod_id)
     timestamp = datetime.now().isoformat()
@@ -47,6 +51,7 @@ def log(pod_id, msg):
     print(f"[{pod_id}] {line}")
     with open(p["log"], "a") as f:
         f.write(line + "\n")
+
 
 def load_meta(pod_id):
     p = paths(pod_id)
@@ -57,22 +62,20 @@ def load_meta(pod_id):
     except:
         return {}
 
+
 def save_meta(pod_id, data):
     p = paths(pod_id)
     with open(p["meta"], "w") as f:
         json.dump(data, f)
 
 # ---------------------------------------------------------
-# Main download & convert function (per podcast)
+# REFRESH PODCAST
 # ---------------------------------------------------------
 def refresh_podcast(pod_id, force=False):
-
     info = PODCASTS[pod_id]
     p = paths(pod_id)
-
     meta = load_meta(pod_id)
 
-    # Skip if updated in last 24 hours
     if not force and "last_update" in meta:
         last = datetime.fromisoformat(meta["last_update"])
         if datetime.now() - last < timedelta(hours=24):
@@ -89,15 +92,14 @@ def refresh_podcast(pod_id, force=False):
         return
 
     latest = feed.entries[0]
-
     if not latest.enclosures:
-        log(pod_id, "❌ ERROR: No audio file found.")
+        log(pod_id, "❌ ERROR: No audio found.")
         return
 
     audio_url = latest.enclosures[0].href
     log(pod_id, f"Audio URL: {audio_url}")
 
-    # Download
+    # Download using ffmpeg
     proc = subprocess.run([
         "ffmpeg", "-y",
         "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
@@ -116,12 +118,10 @@ def refresh_podcast(pod_id, force=False):
     log(pod_id, proc.stderr)
 
     if not os.path.exists(p["original"]) or os.path.getsize(p["original"]) < 50000:
-        log(pod_id, "❌ Download failed (file too small). Aborting.")
+        log(pod_id, "❌ Download failed (too small).")
         return
 
-    # ---------------------------------------------------------
-    # Convert to low bitrate MP3 (40 kbps mono)
-    # ---------------------------------------------------------
+    # Convert low bitrate
     proc = subprocess.run([
         "ffmpeg", "-y",
         "-i", p["original"],
@@ -139,10 +139,8 @@ def refresh_podcast(pod_id, force=False):
         log(pod_id, "❌ Conversion failed.")
         return
 
-    # Save metadata
-    desc = latest.get("summary") or latest.get("description") or ""
     meta["title"] = latest.title
-    meta["description"] = desc
+    meta["description"] = latest.get("summary", "")
     meta["last_update"] = datetime.now().isoformat()
     save_meta(pod_id, meta)
 
@@ -154,14 +152,13 @@ def refresh_podcast(pod_id, force=False):
 def auto_refresher():
     while True:
         print("⏱️ AUTO REFRESH STARTED")
-        for pod_id in PODCASTS:
+        for pid in PODCASTS:
             try:
-                refresh_podcast(pod_id, force=False)
+                refresh_podcast(pid, force=False)
             except Exception as e:
-                print(f"❌ Auto-refresh error for {pod_id}: {e}")
+                print(f"❌ Auto-refresh error ({pid}): {e}")
         print("⏱️ AUTO REFRESH DONE — sleeping 1 hour...\n")
-        time.sleep(3600)  # 1 hour
-
+        time.sleep(3600)
 
 # ---------------------------------------------------------
 # ROUTES
@@ -175,37 +172,46 @@ def home():
         <style>
             body {
                 font-family: Arial, sans-serif;
-                max-width: 600px;
+                max-width: 700px;
                 margin: auto;
-                padding: 20px;
-                background: #f8f9fa;
+                padding: 25px;
+                background: #f3f4f6;
+                font-size: 22px;
+                line-height: 1.6;
             }
             h2 {
                 text-align: center;
-                margin-bottom: 20px;
+                margin-bottom: 30px;
+                font-size: 34px;
+                font-weight: bold;
             }
             .pod {
-                padding: 15px;
-                margin: 12px 0;
+                padding: 25px;
+                margin: 20px 0;
                 background: white;
-                border-radius: 10px;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+                border-radius: 14px;
+                box-shadow: 0 3px 10px rgba(0,0,0,0.15);
             }
             .pod h3 {
-                margin: 0 0 10px 0;
+                margin: 0 0 15px 0;
+                font-size: 28px;
             }
             .btn-row a {
                 display: inline-block;
-                padding: 8px 12px;
-                margin-right: 10px;
+                padding: 14px 20px;
+                margin-right: 15px;
                 background: #007bff;
                 color: white;
                 text-decoration: none;
-                border-radius: 6px;
-                font-size: 14px;
+                border-radius: 8px;
+                font-size: 20px;
             }
             .btn-row a:last-child {
                 background: #6c757d;
+            }
+            audio {
+                width: 100%;
+                margin-top: 15px;
             }
         </style>
     </head>
@@ -225,79 +231,132 @@ def home():
         </div>
         """
 
-    html += """
-    </body>
-    </html>
-    """
+    return html + "</body></html>"
 
-    return html
 
 @app.route("/pod/<pod_id>")
 def view_podcast(pod_id):
     if pod_id not in PODCASTS:
-        return "Invalid podcast ID"
+        return "Invalid ID"
 
     refresh_podcast(pod_id, force=False)
 
     meta = load_meta(pod_id)
     p = paths(pod_id)
-    mp3_exists = os.path.exists(p["final"])
 
-    html = f"<h2>{PODCASTS[pod_id]['name']}</h2>"
+    html = f"""
+    <html>
+    <head>
+    <title>{PODCASTS[pod_id]['name']}</title>
+    <style>
+        body {{
+            font-family: Arial;
+            padding: 25px;
+            font-size: 22px;
+            background: #f3f4f6;
+            max-width: 700px;
+            margin: auto;
+        }}
+        h2 {{ font-size: 34px; }}
+        h3 {{ font-size: 28px; }}
+        audio {{ width: 100%; margin-top: 20px; }}
+        a {{ font-size: 20px; }}
+    </style>
+    </head>
+    <body>
+    <h2>{PODCASTS[pod_id]['name']}</h2>
+    """
 
     if "title" in meta:
         html += f"<h3>{meta['title']}</h3>"
 
-    html += f"<p>{meta.get('description', '')}</p>"
+    html += f"<p>{meta.get('description','')}</p>"
 
-    # INLINE AUDIO PLAYER
-    if mp3_exists:
+    if os.path.exists(p["final"]):
         html += f"""
-            <br><br>
-            <audio controls style="width:100%;">
-                <source src="/pod/{pod_id}/stream" type="audio/mpeg">
-                Your browser does not support audio playback.
-            </audio>
-            <br><a href='/pod/{pod_id}/download'>⬇ Download MP3</a>
+        <audio controls>
+            <source src="/pod/{pod_id}/stream" type="audio/mpeg">
+        </audio>
+        <br><br>
+        <a href='/pod/{pod_id}/download'>⬇ Download MP3</a>
         """
     else:
-        html += "<br>MP3 not ready."
+        html += "MP3 not ready."
 
     html += f"<br><br><a href='/pod/{pod_id}/refresh'>🔄 Force Refresh</a>"
     html += f"<br><a href='/pod/{pod_id}/log'>📜 View Log</a>"
+    html += "</body></html>"
 
     return html
 
+# ---------------------------------------------------------
+# FIXED STREAMING WITH RANGE SUPPORT
+# ---------------------------------------------------------
 @app.route("/pod/<pod_id>/stream")
 def stream(pod_id):
     p = paths(pod_id)
-    if not os.path.exists(p["final"]):
-        return "MP3 not ready", 404
-    return send_file(p["final"])
+    file_path = p["final"]
+
+    if not os.path.exists(file_path):
+        return "Not ready", 404
+
+    file_size = os.path.getsize(file_path)
+    range_header = request.headers.get("Range", None)
+
+    if not range_header:
+        return send_file(file_path)
+
+    byte1, byte2 = 0, file_size - 1
+    r = range_header.split("=")[1]
+    parts = r.split("-")
+
+    if parts[0]:
+        byte1 = int(parts[0])
+    if parts[1]:
+        byte2 = int(parts[1])
+
+    length = byte2 - byte1 + 1
+
+    with open(file_path, "rb") as f:
+        f.seek(byte1)
+        data = f.read(length)
+
+    resp = Response(data, 206, mimetype="audio/mpeg",
+                    direct_passthrough=True)
+    resp.headers.add("Content-Range",
+                     f"bytes {byte1}-{byte2}/{file_size}")
+    resp.headers.add("Accept-Ranges", "bytes")
+    resp.headers.add("Content-Length", str(length))
+
+    return resp
+
 
 @app.route("/pod/<pod_id>/download")
 def download(pod_id):
     p = paths(pod_id)
     if not os.path.exists(p["final"]):
-        return "MP3 not ready", 404
+        return "Not ready", 404
     return send_file(p["final"], as_attachment=True)
+
 
 @app.route("/pod/<pod_id>/refresh")
 def manual_refresh(pod_id):
     refresh_podcast(pod_id, force=True)
     return "Manual refresh done."
 
+
 @app.route("/pod/<pod_id>/log")
 def view_log(pod_id):
     p = paths(pod_id)
     if not os.path.exists(p["log"]):
-        return "No logs yet."
+        return "No logs yet"
     return send_file(p["log"])
 
 # ---------------------------------------------------------
-print("🚀 App started — waiting for podcast requests.")
+# START APP + AUTO THREAD
+# ---------------------------------------------------------
+print("🚀 App ready — auto-refresh enabled.")
 
-# Run
 if __name__ == "__main__":
     threading.Thread(target=auto_refresher, daemon=True).start()
     app.run(host="0.0.0.0", port=8000)
