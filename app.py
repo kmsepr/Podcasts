@@ -5,6 +5,8 @@ import subprocess
 import os
 import json
 from datetime import datetime, timedelta
+import threading
+import time
 
 app = Flask(__name__)
 
@@ -26,7 +28,6 @@ PODCASTS = {
 }
 
 def paths(pod_id):
-    """Return all file paths for a podcast"""
     folder = os.path.join(BASE_CACHE, pod_id)
     os.makedirs(folder, exist_ok=True)
 
@@ -148,9 +149,23 @@ def refresh_podcast(pod_id, force=False):
     log(pod_id, "✔ Refresh complete.")
 
 # ---------------------------------------------------------
+# AUTO REFRESH THREAD (EVERY 1 HOUR)
+# ---------------------------------------------------------
+def auto_refresher():
+    while True:
+        print("⏱️ AUTO REFRESH STARTED")
+        for pod_id in PODCASTS:
+            try:
+                refresh_podcast(pod_id, force=False)
+            except Exception as e:
+                print(f"❌ Auto-refresh error for {pod_id}: {e}")
+        print("⏱️ AUTO REFRESH DONE — sleeping 1 hour...\n")
+        time.sleep(3600)  # 1 hour
+
+
+# ---------------------------------------------------------
 # ROUTES
 # ---------------------------------------------------------
-
 @app.route("/")
 def home():
     html = """
@@ -235,9 +250,7 @@ def view_podcast(pod_id):
 
     html += f"<p>{meta.get('description', '')}</p>"
 
-    # -------------------------------
-    # INLINE AUDIO PLAYER (added)
-    # -------------------------------
+    # INLINE AUDIO PLAYER
     if mp3_exists:
         html += f"""
             <br><br>
@@ -255,9 +268,6 @@ def view_podcast(pod_id):
 
     return html
 
-# -------------------------------
-# STREAM ROUTE (added)
-# -------------------------------
 @app.route("/pod/<pod_id>/stream")
 def stream(pod_id):
     p = paths(pod_id)
@@ -285,11 +295,9 @@ def view_log(pod_id):
     return send_file(p["log"])
 
 # ---------------------------------------------------------
-# IMPORTANT: Removed startup refresh (Koyeb fix)
-# ---------------------------------------------------------
-
-print("🚀 App started — waiting for podcast requests (no startup refresh).")
+print("🚀 App started — waiting for podcast requests.")
 
 # Run
 if __name__ == "__main__":
+    threading.Thread(target=auto_refresher, daemon=True).start()
     app.run(host="0.0.0.0", port=8000)
