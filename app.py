@@ -289,9 +289,6 @@ def view_podcast(pod_id):
 
     return html
 
-# ---------------------------------------------------------
-# FIXED STREAMING WITH RANGE SUPPORT
-# ---------------------------------------------------------
 @app.route("/pod/<pod_id>/stream")
 def stream(pod_id):
     p = paths(pod_id)
@@ -303,33 +300,51 @@ def stream(pod_id):
     file_size = os.path.getsize(file_path)
     range_header = request.headers.get("Range", None)
 
-    if not range_header:
-        return send_file(file_path)
+    if range_header:
+        # Parse Range header
+        byte1, byte2 = 0, file_size - 1
+        r = range_header.split("=")[1]
+        parts = r.split("-")
 
-    byte1, byte2 = 0, file_size - 1
-    r = range_header.split("=")[1]
-    parts = r.split("-")
+        if parts[0]:
+            byte1 = int(parts[0])
+        if parts[1]:
+            byte2 = int(parts[1])
 
-    if parts[0]:
-        byte1 = int(parts[0])
-    if parts[1]:
-        byte2 = int(parts[1])
+        length = byte2 - byte1 + 1
 
-    length = byte2 - byte1 + 1
+        def generate():
+            with open(file_path, "rb") as f:
+                f.seek(byte1)
+                remaining = length
+                chunk = 64 * 1024  # 64KB chunks (safe for Cloud app)
+                while remaining > 0:
+                    data = f.read(min(chunk, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
 
-    with open(file_path, "rb") as f:
-        f.seek(byte1)
-        data = f.read(length)
+        resp = Response(generate(), status=206, mimetype="audio/mpeg")
+        resp.headers.add("Content-Range", f"bytes {byte1}-{byte2}/{file_size}")
+        resp.headers.add("Accept-Ranges", "bytes")
+        resp.headers.add("Content-Length", str(length))
+        return resp
 
-    resp = Response(data, 206, mimetype="audio/mpeg",
-                    direct_passthrough=True)
-    resp.headers.add("Content-Range",
-                     f"bytes {byte1}-{byte2}/{file_size}")
+    # No Range header → stream whole file in chunks
+    def generate_full():
+        with open(file_path, "rb") as f:
+            chunk = 64 * 1024
+            while True:
+                data = f.read(chunk)
+                if not data:
+                    break
+                yield data
+
+    resp = Response(generate_full(), mimetype="audio/mpeg")
+    resp.headers.add("Content-Length", str(file_size))
     resp.headers.add("Accept-Ranges", "bytes")
-    resp.headers.add("Content-Length", str(length))
-
     return resp
-
 
 @app.route("/pod/<pod_id>/download")
 def download(pod_id):
