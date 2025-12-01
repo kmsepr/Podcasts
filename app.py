@@ -24,6 +24,11 @@ PODCASTS = {
     "out": {
         "name": "Out of Focus",
         "rss": "https://feeds.buzzsprout.com/2050847.rss"
+    },
+
+    "firsts": {
+        "name": "The Firsts",
+        "rss": "https://feeds.buzzsprout.com/1194665.rss"
     }
 }
 
