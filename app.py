@@ -351,7 +351,13 @@ def download(pod_id):
     p = paths(pod_id)
     if not os.path.exists(p["final"]):
         return "Not ready", 404
-    return send_file(p["final"], as_attachment=True)
+
+    # Serve raw audio so browsers stream it instead of downloading
+    return send_file(
+        p["final"],
+        mimetype="audio/mpeg",
+        as_attachment=False  # Important: allow browser playback
+    )
 
 
 @app.route("/pod/<pod_id>/refresh")
