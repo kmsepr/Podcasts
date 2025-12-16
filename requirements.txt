@@ -1,5 +1,6 @@
 Flask
 requests
 feedparser
-apscheduler
+APScheduler
 pandas
+openpyxl
