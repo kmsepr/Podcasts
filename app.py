@@ -238,18 +238,105 @@ def home():
 @app.route("/pod/<pod_id>")
 def pod(pod_id):
     if pod_id not in PODCASTS:
-        return "Invalid"
+        return "Invalid Podcast"
 
     refresh_podcast(pod_id)
     meta = load_meta(pod_id)
 
     return f"""
-    <h2>{PODCASTS[pod_id]['name']}</h2>
-    <h3>{meta.get('title','')}</h3>
-    <p>{meta.get('description','')}</p>
-    <audio controls src="/pod/{pod_id}/stream"></audio><br>
-    <a href="/pod/{pod_id}/download">Download</a><br>
-    <a href="/">Home</a>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{PODCASTS[pod_id]['name']}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                margin: 0;
+                min-height: 100vh;
+                background: #020617;
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }}
+            .container {{
+                width: 96%;
+                max-width: 900px;
+                background: #ffffff;
+                padding: 28px;
+                border-radius: 20px;
+                box-shadow: 0 15px 40px rgba(0,0,0,0.45);
+            }}
+            h1 {{
+                font-size: 38px;
+                margin-bottom: 10px;
+            }}
+            h2 {{
+                font-size: 30px;
+                margin: 18px 0;
+                color: #1e293b;
+            }}
+            .desc {{
+                font-size: 22px;
+                line-height: 1.6;
+                color: #334155;
+                background: #f1f5f9;
+                padding: 18px;
+                border-radius: 14px;
+                margin-bottom: 22px;
+            }}
+            audio {{
+                width: 100%;
+                height: 60px;
+                margin-bottom: 22px;
+            }}
+            .btn {{
+                display: block;
+                width: 100%;
+                padding: 22px;
+                font-size: 26px;
+                font-weight: bold;
+                border-radius: 14px;
+                border: none;
+                cursor: pointer;
+                text-align: center;
+                text-decoration: none;
+                margin-bottom: 14px;
+            }}
+            .play {{
+                background: #2563eb;
+                color: white;
+            }}
+            .download {{
+                background: #16a34a;
+                color: white;
+            }}
+            .home {{
+                background: #334155;
+                color: white;
+            }}
+            .btn:active {{
+                opacity: 0.85;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🎙 {PODCASTS[pod_id]['name']}</h1>
+
+            <h2>{meta.get('title', '')}</h2>
+
+            <div class="desc">
+                {meta.get('description', 'No description available')}
+            </div>
+
+            <audio controls src="/pod/{pod_id}/stream"></audio>
+
+            <a class="btn download" href="/pod/{pod_id}/download">⬇ Download Audio</a>
+            <a class="btn home" href="/">⬅ Home</a>
+        </div>
+    </body>
+    </html>
     """
 
 @app.route("/pod/<pod_id>/stream")
