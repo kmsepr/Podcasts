@@ -213,34 +213,58 @@ def stream(pid):
 # MCQ PARSER (UNCHANGED)
 # =========================================================
 def parse_mcqs(text):
-    text = text.replace('\r\n','\n').replace('\r','\n')
-    lines = [l.strip() for l in text.split('\n') if l.strip()]
-    rows=[]; qno=None; q=[]; opts={}; ans=None
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    rows = []
 
-    for line in lines:
-        m = re.match(r'^[\(\[]?([a-dA-D])[\)\:\-]*\s*(.*)', line)
-        if m:
-            opts[m.group(1).lower()] = m.group(2)
-            continue
+    qno = None
+    question = ""
+    options = {}
+    answer = None
 
-        m = re.match(r'^(\d+)\.\s*([A-Da-d])$', line)
-        if m:
-            ans = m.group(2).upper()
+    def flush():
+        nonlocal qno, question, options, answer
+        if qno and question and len(options) >= 2 and answer:
             rows.append([
-                m.group(1),
-                '\n'.join(q) + '\n' +
-                f"A) {opts.get('a','')}\nB) {opts.get('b','')}\nC) {opts.get('c','')}\nD) {opts.get('d','')}",
-                "A","B","C","D",
-                {"A":1,"B":2,"C":3,"D":4}[ans]
+                qno,
+                question,
+                options.get("A",""),
+                options.get("B",""),
+                options.get("C",""),
+                options.get("D",""),
+                {"A":1,"B":2,"C":3,"D":4}.get(answer, "")
             ])
-            q=[]; opts={}
+        qno = None
+        question = ""
+        options = {}
+        answer = None
+
+    for l in lines:
+
+        # ---------- QUESTION ----------
+        m = re.match(r'^(?:Q\.?\s*)?(\d+)[\.\)\-\:]\s*(.*)', l, re.I)
+        if m:
+            flush()
+            qno = m.group(1)
+            question = m.group(2)
             continue
 
-        m = re.match(r'^(\d+)\.(.*)', line)
+        # ---------- OPTION ----------
+        m = re.match(r'^\(?([A-Da-d])\)?[\.\)\:\-\s]+(.*)', l)
         if m:
-            q=[m.group(2)]
+            options[m.group(1).upper()] = m.group(2).strip()
             continue
-        q.append(line)
+
+        # ---------- ANSWER ----------
+        m = re.search(r'(?:Ans|Answer|Correct Answer)?\s*[:\-]?\s*([A-Da-d])$', l, re.I)
+        if m:
+            answer = m.group(1).upper()
+            continue
+
+        # ---------- MULTI-LINE QUESTION ----------
+        if question and not answer:
+            question += " " + l
+
+    flush()
     return rows
 
 # =========================================================
