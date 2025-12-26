@@ -127,11 +127,21 @@ def refresh_podcast(pid, force=False):
 
     # ---------- DOWNLOAD ----------
     logging.info(f"[{pid}] downloading orig.mp3")
-    r = subprocess.run(
-        ["ffmpeg", "-y", "-i", audio, p["orig"]],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
+    headers = (
+    "User-Agent: Mozilla/5.0 (X11; Linux x86_64)\r\n"
+    "Referer: https://www.buzzsprout.com\r\n"
+)
+
+r = subprocess.run(
+    [
+        "ffmpeg", "-y",
+        "-headers", headers,
+        "-i", audio,
+        p["orig"]
+    ],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE
+)
 
     if r.returncode != 0:
         logging.error(f"[{pid}] ffmpeg download failed")
