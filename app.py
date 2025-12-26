@@ -26,7 +26,11 @@ PODCASTS = {
         "name": "In Focus",
         "rss": "https://feeds.megaphone.fm/THGU4956605070"
     },
-    
+
+    "out": {
+        "name": "Out of Focus",
+        "rss": "https://feeds.buzzsprout.com/2050847.rss"
+    },
 }
 
 # =========================================================
