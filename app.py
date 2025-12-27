@@ -52,6 +52,7 @@ def paths(pid):
         "meta": os.path.join(folder, "meta.json"),
         "orig": os.path.join(folder, "orig.mp3"),
         "final": os.path.join(folder, "final.mp3"),
+        "tmp": os.path.join(folder, "final.tmp.mp3"),  # 👈 NEW (safe)
     }
 
 def load_meta(pid):
@@ -91,21 +92,6 @@ def refresh_podcast(pid, force=False):
     entry = feed.entries[0]
     logging.info(f"[{pid}] episode: {entry.get('title')}")
 
-    # ---------- LOG ENCLOSURES ----------
-    if entry.enclosures:
-        logging.info(f"[{pid}] enclosures:")
-        for e in entry.enclosures:
-            logging.info(f"  href={e.href} type={getattr(e,'type',None)}")
-    else:
-        logging.warning(f"[{pid}] no enclosures")
-
-    # ---------- LOG LINKS ----------
-    if "links" in entry:
-        logging.info(f"[{pid}] links:")
-        for l in entry.links:
-            logging.info(f"  href={l.get('href')} type={l.get('type')}")
-
-    # ---------- FIND AUDIO ----------
     audio = None
     if entry.enclosures:
         audio = entry.enclosures[0].href
@@ -125,7 +111,7 @@ def refresh_podcast(pid, force=False):
 
     p = paths(pid)
 
-    # ---------- DOWNLOAD (Buzzsprout safe) ----------
+    # ---------- DOWNLOAD ----------
     logging.info(f"[{pid}] downloading orig.mp3")
 
     headers = (
@@ -134,49 +120,38 @@ def refresh_podcast(pid, force=False):
     )
 
     r = subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-headers", headers,
-            "-i", audio,
-            p["orig"]
-        ],
+        ["ffmpeg", "-y", "-headers", headers, "-i", audio, p["orig"]],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
 
     if r.returncode != 0:
-        logging.error(f"[{pid}] ffmpeg download failed")
         logging.error(r.stderr.decode())
-        return
-
-    if not os.path.exists(p["orig"]):
-        logging.error(f"[{pid}] orig.mp3 missing")
         return
 
     logging.info(f"[{pid}] orig.mp3 OK")
 
-    # ---------- TRANSCODE ----------
-    logging.info(f"[{pid}] transcoding to final.mp3")
+    # ---------- TRANSCODE (SAFE) ----------
+    logging.info(f"[{pid}] transcoding to temp file")
+
     r = subprocess.run(
         [
             "ffmpeg", "-y", "-i", p["orig"],
             "-ac", "1", "-b:a", "40k", "-ar", "22050",
-            p["final"]
+            p["tmp"]
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
 
     if r.returncode != 0:
-        logging.error(f"[{pid}] ffmpeg transcode failed")
         logging.error(r.stderr.decode())
         return
 
-    if not os.path.exists(p["final"]):
-        logging.error(f"[{pid}] final.mp3 missing")
-        return
+    # 🔒 ATOMIC REPLACE (NO STREAM RESET)
+    os.replace(p["tmp"], p["final"])
 
-    logging.info(f"[{pid}] final.mp3 READY")
+    logging.info(f"[{pid}] final.mp3 READY (atomic swap)")
 
     meta = {
         "title": entry.get("title", ""),
@@ -217,10 +192,6 @@ def home():
     </style></head><body>
     <div class="box">
     <h1>🎧 Media Hub</h1>
-    <div class="card">
-        <h2>📘 MCQ Tools</h2>
-        <a class="btn" href="/mcq">📝 MCQ → Excel Converter</a>
-    </div>
     """
 
     for pid, info in PODCASTS.items():
@@ -269,7 +240,7 @@ def stream(pid):
     return Response(gen(), mimetype="audio/mpeg")
 
 # =========================================================
-# MCQ PARSER + UI (UNCHANGED)
+# MCQ SECTION (UNCHANGED)
 # =========================================================
 def parse_mcqs(text):
     lines = [l.strip() for l in text.splitlines() if l.strip()]
