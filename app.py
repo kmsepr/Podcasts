@@ -40,9 +40,10 @@ PODCASTS = {
         "rss": "https://feeds.buzzsprout.com/2050847.rss"
     },
 
-"srna": {
-        "name": "SRNA waves",
-        "rss":"https://anchor.fm/s/2f65d68/podcast/rss"
+"yaqeen": {
+        "name": "Yaqeen",
+        "rss":"https://rss.buzzsprout.com/1014445.rss"
+    
     }
 }
 
