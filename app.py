@@ -197,7 +197,7 @@ def home():
          text-decoration:none;color:#fff;text-align:center;background:#2563eb}
     </style></head><body>
     <div class="box">
-    <h1>🎧 Media Hub</h1>
+    <h1>🎧 Podcasts</h1>
     """
 
     for pid, info in PODCASTS.items():
