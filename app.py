@@ -39,6 +39,11 @@ PODCASTS = {
         "name": "Out of Focus",
         "rss": "https://feeds.buzzsprout.com/2050847.rss"
     }
+
+"srna": {
+        "name": "SRNA waves",
+        "rss":"https://anchor.fm/s/2f65d68/podcast/rss"
+    }
 }
 
 # =========================================================
