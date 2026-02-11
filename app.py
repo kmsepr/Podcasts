@@ -280,9 +280,10 @@ def pod(pid):
 
         <br>
 
-        <a class="btn download" href="/pod/{pid}/download">
-            ⬇ Download Episode
-        </a>
+        <a class="btn download" href="/pod/{pid}/stream">
+        ▶ Play
+       </a>
+
 
         <a class="btn home" href="/">
             ⬅ Home
@@ -306,7 +307,6 @@ def stream(pid):
         mimetype="audio/mpeg",
         conditional=True
     )
-
 
 @app.route("/pod/<pid>/download")
 def download(pid):
