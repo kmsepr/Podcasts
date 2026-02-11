@@ -221,18 +221,75 @@ def home():
 # =========================================================
 @app.route("/pod/<pid>")
 def pod(pid):
+    if pid not in PODCASTS:
+        return "Podcast not found", 404
+
     refresh_podcast(pid)
     meta = load_meta(pid)
 
     return f"""
-    <html><body style="font-family:Arial;background:#020617;margin:0">
-    <div style="max-width:900px;margin:auto;background:#fff;padding:28px;border-radius:20px">
-        <h1>{PODCASTS[pid]['name']}</h1>
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width">
+    <style>
+    body {{
+        font-family: Arial;
+        background: #020617;
+        margin: 0;
+    }}
+    .box {{
+        max-width: 900px;
+        margin: auto;
+        background: #ffffff;
+        padding: 28px;
+        border-radius: 20px;
+        margin-top: 20px;
+    }}
+    h1 {{
+        margin-top: 0;
+    }}
+    .btn {{
+        display: inline-block;
+        padding: 14px 22px;
+        font-size: 18px;
+        border-radius: 10px;
+        text-decoration: none;
+        color: #fff;
+        margin-top: 15px;
+    }}
+    .download {{
+        background: #16a34a;
+    }}
+    .home {{
+        background: #2563eb;
+        margin-left: 10px;
+    }}
+    audio {{
+        margin-top: 20px;
+        width: 100%;
+    }}
+    </style>
+    </head>
+    <body>
+    <div class="box">
+        <h1>🎙 {PODCASTS[pid]['name']}</h1>
         <h2>{meta.get('title','')}</h2>
         <div>{meta.get('description','')}</div>
-        <audio controls style="width:100%" src="/pod/{pid}/stream"></audio>
-        <a href="/">⬅ Home</a>
-    </div></body></html>
+
+        <audio controls src="/pod/{pid}/stream"></audio>
+
+        <br>
+
+        <a class="btn download" href="/pod/{pid}/download">
+            ⬇ Download Episode
+        </a>
+
+        <a class="btn home" href="/">
+            ⬅ Home
+        </a>
+    </div>
+    </body>
+    </html>
     """
 
 @app.route("/pod/<pid>/stream")
@@ -250,6 +307,23 @@ def stream(pid):
                 yield b
 
     return Response(gen(), mimetype="audio/mpeg")
+
+
+@app.route("/pod/<pid>/download")
+def download(pid):
+    if pid not in PODCASTS:
+        return "Podcast not found", 404
+
+    f = paths(pid)["final"]
+    if not os.path.exists(f):
+        return "Not ready", 404
+
+    return send_file(
+        f,
+        as_attachment=True,
+        download_name=f"{pid}.mp3",
+        mimetype="audio/mpeg"
+    )
 
 # =========================================================
 # MCQ SECTION (UNCHANGED)
