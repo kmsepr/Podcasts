@@ -44,6 +44,12 @@ PODCASTS = {
         "name": "Yaqeen",
         "rss":"https://rss.buzzsprout.com/1014445.rss"
     
+    },
+
+    "eft": {
+        "name": "EFT",
+        "rss":"https://tappingqanda.libsyn.com/rss"
+    
     }
 }
 
