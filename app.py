@@ -294,19 +294,18 @@ def pod(pid):
 
 @app.route("/pod/<pid>/stream")
 def stream(pid):
+    if pid not in PODCASTS:
+        return "Podcast not found", 404
+
     f = paths(pid)["final"]
     if not os.path.exists(f):
         return "Not ready", 404
 
-    def gen():
-        with open(f, "rb") as fh:
-            while True:
-                b = fh.read(65536)
-                if not b:
-                    break
-                yield b
-
-    return Response(gen(), mimetype="audio/mpeg")
+    return send_file(
+        f,
+        mimetype="audio/mpeg",
+        conditional=True
+    )
 
 
 @app.route("/pod/<pid>/download")
